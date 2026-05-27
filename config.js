@@ -8,6 +8,7 @@ export function defaultConfig() {
         controllers: [],
         sensors: [],
         borehole_capacity_lpm: null,
+        default_zone_flow_lpm: null,
     };
 }
 

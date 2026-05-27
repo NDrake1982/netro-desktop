@@ -83,6 +83,21 @@ async function loadTimeline() {
         </span>
     `).join('');
 
+    // Compute conflicts across all controllers (sweep line).
+    const capacity = config.borehole_capacity_lpm;
+    const zoneFlow = config.default_zone_flow_lpm || capacity; // default to capacity → any overlap is a conflict
+    const conflicts = capacity ? computeConflicts(schedulesByController, zoneFlow, capacity) : [];
+
+    // Summary banner
+    let summaryHtml = '';
+    if (!capacity) {
+        summaryHtml = `<div class="timeline-summary">Set a borehole capacity in Settings to enable conflict detection.</div>`;
+    } else if (conflicts.length === 0) {
+        summaryHtml = `<div class="timeline-summary ok">✓ No borehole capacity conflicts in the next 7 days (capacity ${capacity} L/min, zone flow ${zoneFlow} L/min)</div>`;
+    } else {
+        summaryHtml = `<div class="timeline-summary warn">⚠ ${conflicts.length} conflict${conflicts.length > 1 ? 's' : ''} where simultaneous flow exceeds the ${capacity} L/min borehole capacity. Each conflict is shown in red on the timeline below.</div>`;
+    }
+
     // Build days
     const days = [];
     for (let i = 0; i < 7; i++) {
@@ -91,12 +106,46 @@ async function loadTimeline() {
         days.push(d);
     }
 
-    container.innerHTML = days.map(d => renderDayCard(d, schedulesByController, infoByController)).join('');
+    container.innerHTML = summaryHtml + days.map(d => renderDayCard(d, schedulesByController, infoByController, conflicts)).join('');
 
     if (errors.length) toast('Some schedules failed: ' + errors.join('; '), 'error');
 }
 
-function renderDayCard(dayDate, schedulesByController, infoByController) {
+function computeConflicts(schedulesByController, zoneFlowLpm, capacityLpm) {
+    // Build a sorted event list: +flow at watering start, -flow at watering end.
+    const events = [];
+    for (const scheds of schedulesByController.values()) {
+        for (const s of scheds) {
+            events.push({ t: new Date(s.start_time).getTime(), delta: +zoneFlowLpm });
+            events.push({ t: new Date(s.end_time).getTime(),   delta: -zoneFlowLpm });
+        }
+    }
+    events.sort((a, b) => a.t - b.t || a.delta - b.delta); // ends before starts at same instant
+
+    const conflicts = [];
+    let current = 0;
+    let conflictStart = null;
+    let conflictPeak = 0;
+    for (const ev of events) {
+        const newCurrent = current + ev.delta;
+        const wasOver = current > capacityLpm + 0.0001;
+        const isOver = newCurrent > capacityLpm + 0.0001;
+        if (!wasOver && isOver) {
+            conflictStart = ev.t;
+            conflictPeak = newCurrent;
+        }
+        if (wasOver) conflictPeak = Math.max(conflictPeak, newCurrent);
+        if (wasOver && !isOver) {
+            conflicts.push({ start: new Date(conflictStart), end: new Date(ev.t), peak: conflictPeak });
+            conflictStart = null;
+            conflictPeak = 0;
+        }
+        current = newCurrent;
+    }
+    return conflicts;
+}
+
+function renderDayCard(dayDate, schedulesByController, infoByController, conflicts = []) {
     const dayStart = new Date(dayDate);
     dayStart.setHours(0, 0, 0, 0);
     const dayEnd = new Date(dayStart);
@@ -104,7 +153,6 @@ function renderDayCard(dayDate, schedulesByController, infoByController) {
 
     const now = new Date();
     const isToday = now >= dayStart && now < dayEnd;
-    const isPast = dayEnd <= now;
 
     const todayMidnight = new Date(); todayMidnight.setHours(0,0,0,0);
     const dayDiff = Math.round((dayStart - todayMidnight) / 86400000);
@@ -127,6 +175,22 @@ function renderDayCard(dayDate, schedulesByController, infoByController) {
 
     const totalScheds = lanes.reduce((n, l) => n + l.scheds.length, 0);
 
+    // Conflict bands that overlap this day, clipped to the day.
+    const dayConflicts = conflicts
+        .filter(c => c.end > dayStart && c.start < dayEnd)
+        .map(c => ({
+            start: c.start < dayStart ? dayStart : c.start,
+            end:   c.end > dayEnd ? dayEnd : c.end,
+            peak:  c.peak,
+        }));
+
+    const conflictBands = dayConflicts.map(c => {
+        const leftPct = ((c.start - dayStart) / 86400000) * 100;
+        const widthPct = Math.max(0.3, ((c.end - c.start) / 86400000) * 100);
+        const tip = `Conflict ${formatTime(c.start)}–${formatTime(c.end)} · peak ${c.peak.toFixed(1)} L/min`;
+        return `<div class="conflict-band" style="left:${leftPct}%; width:${widthPct}%" title="${escapeHtml(tip)}"></div>`;
+    }).join('');
+
     // Hour ruler (00, 06, 12, 18, 24)
     const hourTicks = [0, 6, 12, 18, 24].map(h => `
         <span class="hour-tick" style="left:${(h / 24) * 100}%"></span>
@@ -141,13 +205,6 @@ function renderDayCard(dayDate, schedulesByController, infoByController) {
     }
 
     const laneRows = lanes.map(({ cfg, info, scheds }) => {
-        if (!scheds.length) {
-            return `
-                <div class="controller-lane">
-                    <div class="lane-label">${escapeHtml(cfg.nickname || cfg.serial)}</div>
-                    <div class="lane-track">${nowMarker}</div>
-                </div>`;
-        }
         const blocks = scheds.map(s => {
             const st = Math.max(new Date(s.start_time), dayStart);
             const en = Math.min(new Date(s.end_time), dayEnd);
@@ -164,9 +221,13 @@ function renderDayCard(dayDate, schedulesByController, infoByController) {
         return `
             <div class="controller-lane">
                 <div class="lane-label">${escapeHtml(cfg.nickname || cfg.serial)}</div>
-                <div class="lane-track">${nowMarker}${blocks}</div>
+                <div class="lane-track">${conflictBands}${nowMarker}${blocks}</div>
             </div>`;
     }).join('');
+
+    const conflictSummary = dayConflicts.length
+        ? `<div class="day-conflicts">⚠ ${dayConflicts.length} conflict${dayConflicts.length > 1 ? 's' : ''} today</div>`
+        : '';
 
     return `
         <div class="day-card">
@@ -174,6 +235,7 @@ function renderDayCard(dayDate, schedulesByController, infoByController) {
                 <div>
                     <span class="day-name ${isToday ? 'today' : ''}">${label}</span>
                     <span class="day-date">${dateStr}</span>
+                    ${conflictSummary}
                 </div>
                 ${totalScheds === 0 ? `<span class="day-empty">No waterings scheduled</span>` : ''}
             </div>
@@ -470,6 +532,7 @@ document.addEventListener('keydown', (e) => {
 // ---------- Settings ----------
 function renderSettings() {
     document.getElementById('borehole-lpm').value = config.borehole_capacity_lpm ?? '';
+    document.getElementById('default-zone-flow').value = config.default_zone_flow_lpm ?? '';
 
     renderEditList(
         'controller-edit-list',
@@ -541,6 +604,8 @@ function captureSettingsToConfig() {
 
     const bh = document.getElementById('borehole-lpm').value;
     config.borehole_capacity_lpm = bh ? parseFloat(bh) : null;
+    const dz = document.getElementById('default-zone-flow').value;
+    config.default_zone_flow_lpm = dz ? parseFloat(dz) : null;
 }
 
 document.getElementById('add-controller').addEventListener('click', () => {

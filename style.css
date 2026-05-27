@@ -358,6 +358,46 @@ main {
 
 .water-block.past { opacity: 0.35; }
 
+/* Conflict overlay on lane track */
+.conflict-band {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    background: rgba(248,81,73,0.18);
+    border-left: 1px solid rgba(248,81,73,0.5);
+    border-right: 1px solid rgba(248,81,73,0.5);
+    pointer-events: none;
+    z-index: 0;
+}
+
+.timeline-summary {
+    padding: 10px 14px;
+    border-radius: 8px;
+    margin-bottom: 14px;
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.timeline-summary.ok {
+    background: rgba(63,185,80,0.08);
+    border: 1px solid rgba(63,185,80,0.3);
+    color: var(--green);
+}
+
+.timeline-summary.warn {
+    background: rgba(248,81,73,0.08);
+    border: 1px solid rgba(248,81,73,0.3);
+    color: var(--red);
+}
+
+.day-conflicts {
+    font-size: 11px;
+    color: var(--red);
+    margin-top: 2px;
+}
+
 /* Section heading on dashboard */
 .section-title {
     font-size: 13px;
