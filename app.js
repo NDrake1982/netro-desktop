@@ -16,6 +16,176 @@ function switchTab(name) {
     document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
     document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === name));
     if (name === 'settings') renderSettings();
+    if (name === 'timeline') loadTimeline();
+}
+
+// ---------- Timeline ----------
+const CONTROLLER_COLORS = ['#4cc2ff', '#b794f6', '#f6ad55', '#68d391', '#fc8181', '#f6e05e'];
+
+function colorFor(serial) {
+    if (!colorFor._map) colorFor._map = new Map();
+    if (!colorFor._map.has(serial)) {
+        colorFor._map.set(serial, CONTROLLER_COLORS[colorFor._map.size % CONTROLLER_COLORS.length]);
+    }
+    return colorFor._map.get(serial);
+}
+
+function toIsoDate(d) {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+}
+
+async function loadTimeline() {
+    const container = document.getElementById('timeline-content');
+    const legend = document.getElementById('timeline-legend');
+
+    if (!hasController(config)) {
+        container.innerHTML = `<div class="placeholder">Add a controller in Settings first.</div>`;
+        legend.innerHTML = '';
+        return;
+    }
+
+    container.innerHTML = `<div class="loading">Loading…</div>`;
+
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(start);
+    end.setDate(end.getDate() + 6);
+    const startStr = toIsoDate(start);
+    const endStr = toIsoDate(end);
+
+    // Look up zone names so blocks can be labelled.
+    const infoByController = new Map();
+    const schedulesByController = new Map();
+    const errors = [];
+
+    await Promise.all(config.controllers.map(async c => {
+        try {
+            const [info, schedules] = await Promise.all([
+                netro.info(c.serial),
+                netro.schedules(c.serial, { start_date: startStr, end_date: endStr }),
+            ]);
+            infoByController.set(c.serial, info);
+            schedulesByController.set(c.serial, schedules);
+        } catch (e) {
+            errors.push(`${c.nickname}: ${e.message}`);
+            schedulesByController.set(c.serial, []);
+        }
+    }));
+
+    // Legend
+    legend.innerHTML = config.controllers.map(c => `
+        <span class="legend-item">
+            <span class="legend-swatch" style="background:${colorFor(c.serial)}"></span>
+            ${escapeHtml(c.nickname || c.serial)}
+        </span>
+    `).join('');
+
+    // Build days
+    const days = [];
+    for (let i = 0; i < 7; i++) {
+        const d = new Date(start);
+        d.setDate(start.getDate() + i);
+        days.push(d);
+    }
+
+    container.innerHTML = days.map(d => renderDayCard(d, schedulesByController, infoByController)).join('');
+
+    if (errors.length) toast('Some schedules failed: ' + errors.join('; '), 'error');
+}
+
+function renderDayCard(dayDate, schedulesByController, infoByController) {
+    const dayStart = new Date(dayDate);
+    dayStart.setHours(0, 0, 0, 0);
+    const dayEnd = new Date(dayStart);
+    dayEnd.setDate(dayEnd.getDate() + 1);
+
+    const now = new Date();
+    const isToday = now >= dayStart && now < dayEnd;
+    const isPast = dayEnd <= now;
+
+    const todayMidnight = new Date(); todayMidnight.setHours(0,0,0,0);
+    const dayDiff = Math.round((dayStart - todayMidnight) / 86400000);
+    let label;
+    if (dayDiff === 0) label = 'Today';
+    else if (dayDiff === 1) label = 'Tomorrow';
+    else label = dayDate.toLocaleDateString(undefined, { weekday: 'long' });
+
+    const dateStr = dayDate.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+
+    // Collect blocks per controller for this day.
+    const lanes = config.controllers.map(c => {
+        const scheds = (schedulesByController.get(c.serial) || []).filter(s => {
+            const st = new Date(s.start_time);
+            const en = new Date(s.end_time);
+            return en > dayStart && st < dayEnd;
+        });
+        return { cfg: c, info: infoByController.get(c.serial), scheds };
+    });
+
+    const totalScheds = lanes.reduce((n, l) => n + l.scheds.length, 0);
+
+    // Hour ruler (00, 06, 12, 18, 24)
+    const hourTicks = [0, 6, 12, 18, 24].map(h => `
+        <span class="hour-tick" style="left:${(h / 24) * 100}%"></span>
+        <span class="hour-label" style="left:${(h / 24) * 100}%">${String(h).padStart(2, '0')}</span>
+    `).join('');
+
+    // "Now" line only for today
+    let nowMarker = '';
+    if (isToday) {
+        const pct = ((now - dayStart) / 86400000) * 100;
+        nowMarker = `<span class="timeline-now" style="left:${pct}%"></span>`;
+    }
+
+    const laneRows = lanes.map(({ cfg, info, scheds }) => {
+        if (!scheds.length) {
+            return `
+                <div class="controller-lane">
+                    <div class="lane-label">${escapeHtml(cfg.nickname || cfg.serial)}</div>
+                    <div class="lane-track">${nowMarker}</div>
+                </div>`;
+        }
+        const blocks = scheds.map(s => {
+            const st = Math.max(new Date(s.start_time), dayStart);
+            const en = Math.min(new Date(s.end_time), dayEnd);
+            const leftPct = ((st - dayStart) / 86400000) * 100;
+            const widthPct = Math.max(0.3, ((en - st) / 86400000) * 100);
+            const zoneName = info?.zones?.find(z => z.ith === s.zone)?.name || `Zone ${s.zone}`;
+            const past = en <= now ? 'past' : '';
+            const tooltip = `${zoneName} · ${formatTime(new Date(s.start_time))}–${formatTime(new Date(s.end_time))} · ${Math.round((new Date(s.end_time) - new Date(s.start_time)) / 60000)} min`;
+            return `
+                <div class="water-block ${past}"
+                     style="left:${leftPct}%; width:${widthPct}%; background:${colorFor(cfg.serial)}"
+                     title="${escapeHtml(tooltip)}">${escapeHtml(zoneName)}</div>`;
+        }).join('');
+        return `
+            <div class="controller-lane">
+                <div class="lane-label">${escapeHtml(cfg.nickname || cfg.serial)}</div>
+                <div class="lane-track">${nowMarker}${blocks}</div>
+            </div>`;
+    }).join('');
+
+    return `
+        <div class="day-card">
+            <div class="day-header">
+                <div>
+                    <span class="day-name ${isToday ? 'today' : ''}">${label}</span>
+                    <span class="day-date">${dateStr}</span>
+                </div>
+                ${totalScheds === 0 ? `<span class="day-empty">No waterings scheduled</span>` : ''}
+            </div>
+            ${totalScheds > 0 ? `
+                <div class="hour-ruler">${hourTicks}</div>
+                ${laneRows}
+            ` : ''}
+        </div>`;
+}
+
+function formatTime(d) {
+    return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false });
 }
 
 // ---------- Toast ----------

@@ -34,8 +34,18 @@
         </section>
 
         <section id="timeline" class="view">
-            <div class="placeholder">
-                Unified 7-day timeline coming next. It will show every upcoming watering across your controllers on one chart, with conflicts highlighted based on the borehole capacity you set in Settings.
+            <div class="timeline-header">
+                <div>
+                    <h2 class="section-title" style="margin-top:0;">Next 7 days</h2>
+                    <p class="hint" id="timeline-hint">
+                        Each row is one controller. Vertical alignment between rows = simultaneous
+                        watering across controllers (potential borehole conflict).
+                    </p>
+                </div>
+                <div id="timeline-legend" class="timeline-legend"></div>
+            </div>
+            <div id="timeline-content" class="timeline">
+                <div class="loading">Loading…</div>
             </div>
         </section>
 
