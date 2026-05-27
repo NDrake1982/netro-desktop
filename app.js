@@ -22,7 +22,8 @@ function switchTab(name) {
 
 // ---------- Automation (Cloudflare Worker) ----------
 const WORKER_STORE = 'netro-desktop-worker-v1';
-let workerCfg = null; // loaded from the Worker when connected
+let workerCfg = null;                       // loaded from the Worker when connected
+let workerControllerInfos = new Map();      // serial -> netro device info (for zone dropdowns)
 
 function loadWorkerCreds() {
     const raw = localStorage.getItem(WORKER_STORE);
@@ -69,6 +70,7 @@ async function connectWorker() {
         workerCfg = await cfgResp.json();
         saveWorkerCreds({ url, token });
         status.textContent = `Connected · Worker v${s.version}`;
+        await refreshControllerInfos();
         renderWorkerPanel();
     } catch (e) {
         status.textContent = '';
@@ -82,6 +84,21 @@ function renderWorkerPanel() {
     document.getElementById('worker-panel').hidden = false;
     renderPatterns();
     renderLastRun();
+}
+
+// Pull live device info for every controller in workerCfg so zone dropdowns
+// only show zones that are actually enabled on the Netro device.
+async function refreshControllerInfos() {
+    workerControllerInfos.clear();
+    const controllers = workerCfg?.controllers || [];
+    await Promise.all(controllers.map(async c => {
+        try {
+            const info = await netro.info(c.serial);
+            workerControllerInfos.set(c.serial, info);
+        } catch {
+            // leave missing — renderPatternRow falls back to a numeric input
+        }
+    }));
 }
 
 function renderPatterns() {
@@ -107,6 +124,8 @@ function renderPatternRow(p, i) {
         </label>
     `).join('');
 
+    const zoneField = renderZoneField(p.controller_serial, p.zone);
+
     return `
         <div class="pattern-row ${p.enabled === false ? 'disabled' : ''}" data-i="${i}">
             <div class="row-top">
@@ -117,9 +136,9 @@ function renderPatternRow(p, i) {
                         ${controllerOpts}
                     </select>
                 </label>
-                <label class="field compact">
+                <label class="field">
                     <span>Zone</span>
-                    <input class="p-zone" type="number" min="1" max="24" value="${p.zone ?? 1}">
+                    ${zoneField}
                 </label>
                 <label class="field narrow">
                     <span>Time (UTC)</span>
@@ -147,11 +166,40 @@ function renderPatternRow(p, i) {
         </div>`;
 }
 
+// Render the zone selector — dropdown of enabled zones if we have info,
+// numeric input as a fallback if info is missing.
+function renderZoneField(controllerSerial, currentZone) {
+    const info = workerControllerInfos.get(controllerSerial);
+    if (!info || !Array.isArray(info.zones)) {
+        return `<input class="p-zone" type="number" min="1" max="24" value="${currentZone ?? 1}">`;
+    }
+    const activeZones = info.zones.filter(z => z.enabled);
+    if (!activeZones.length) {
+        return `<select class="p-zone" disabled><option>no active zones</option></select>`;
+    }
+    const opts = activeZones.map(z =>
+        `<option value="${z.ith}" ${z.ith === currentZone ? 'selected' : ''}>${z.ith} · ${escapeHtml(z.name)}</option>`
+    ).join('');
+    // If currentZone isn't in the active list (e.g. previously selected then disabled in Netro), surface it.
+    const isDisabledZone = currentZone && !activeZones.some(z => z.ith === currentZone);
+    const orphan = isDisabledZone
+        ? `<option value="${currentZone}" selected>${currentZone} · (disabled on device)</option>`
+        : '';
+    return `<select class="p-zone">${orphan}${opts}</select>`;
+}
+
 function wirePatternEvents() {
     document.querySelectorAll('[data-remove-pattern]').forEach(b => {
         b.addEventListener('click', () => {
             capturePatternsToWorkerCfg();
             workerCfg.patterns.splice(+b.dataset.removePattern, 1);
+            renderPatterns();
+        });
+    });
+    // When controller changes, re-render the row so the zone dropdown reflects that controller's zones.
+    document.querySelectorAll('.p-controller').forEach(sel => {
+        sel.addEventListener('change', () => {
+            capturePatternsToWorkerCfg();
             renderPatterns();
         });
     });
@@ -192,7 +240,7 @@ document.getElementById('add-pattern').addEventListener('click', () => {
     renderPatterns();
 });
 
-document.getElementById('sync-from-local').addEventListener('click', () => {
+document.getElementById('sync-from-local').addEventListener('click', async () => {
     if (!workerCfg) return;
     workerCfg.controllers = config.controllers.map(c => ({
         serial: c.serial,
@@ -200,7 +248,8 @@ document.getElementById('sync-from-local').addEventListener('click', () => {
     }));
     workerCfg.borehole_capacity_lpm = config.borehole_capacity_lpm ?? workerCfg.borehole_capacity_lpm;
     workerCfg.default_zone_flow_lpm = config.default_zone_flow_lpm ?? workerCfg.default_zone_flow_lpm;
-    renderPatterns(); // controller dropdowns will repopulate
+    await refreshControllerInfos(); // pick up any newly-synced controllers' zone lists
+    renderPatterns();
     toast(`Synced ${workerCfg.controllers.length} controllers + borehole capacity`, 'success');
 });
 
