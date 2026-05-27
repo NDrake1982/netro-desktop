@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NetroDesktop</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%92%A7%3C/text%3E%3C/svg%3E">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header class="topbar">
+        <div class="brand">
+            <span class="logo">💧</span>
+            <h1>NetroDesktop</h1>
+        </div>
+        <nav class="tabs">
+            <button class="tab active" data-tab="dashboard">Dashboard</button>
+            <button class="tab" data-tab="timeline">Timeline</button>
+            <button class="tab" data-tab="settings">Settings</button>
+        </nav>
+        <button id="refresh-btn" class="icon-btn" title="Refresh">⟳</button>
+    </header>
+
+    <main>
+        <section id="dashboard" class="view active">
+            <div id="controllers" class="controller-grid">
+                <div class="loading">Loading…</div>
+            </div>
+        </section>
+
+        <section id="timeline" class="view">
+            <div class="placeholder">
+                Unified 7-day timeline coming next. It will show every upcoming watering across your controllers on one chart, with conflicts highlighted based on the borehole capacity you set in Settings.
+            </div>
+        </section>
+
+        <section id="settings" class="view">
+            <div class="settings-panel">
+                <h2>Borehole</h2>
+                <label class="field">
+                    <span>Borehole sustainable output (L/min) — used for conflict detection on the Timeline</span>
+                    <input id="borehole-lpm" type="number" min="0" step="0.5" placeholder="e.g. 30">
+                </label>
+
+                <h2>Controllers</h2>
+                <p class="hint">
+                    Each Netro controller has a 12-character hex serial number. Find it in the Netro mobile app:
+                    open the controller → Settings → look for "Serial number".
+                </p>
+                <div id="controller-edit-list"></div>
+                <button id="add-controller" class="btn-secondary">+ Add controller</button>
+
+                <h2>Privacy</h2>
+                <p class="hint">
+                    Your serial numbers are stored only in this browser's local storage. They're sent
+                    directly to <code>api.netrohome.com</code> when the dashboard fetches data — never
+                    to any third-party server. Use the same page on another device by entering the
+                    same serials there.
+                </p>
+
+                <div class="save-bar">
+                    <span id="save-status"></span>
+                    <button id="save-config" class="btn-primary">Save</button>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <div id="toast" class="toast" hidden></div>
+
+    <div id="run-modal" class="modal" hidden>
+        <div class="modal-content">
+            <h3>Run zone</h3>
+            <div id="run-modal-body"></div>
+            <label class="field">
+                <span>Duration (minutes)</span>
+                <input id="run-duration" type="number" min="1" max="240" value="10">
+            </label>
+            <div class="modal-actions">
+                <button class="btn-secondary" data-close-modal>Cancel</button>
+                <button class="btn-primary" id="run-confirm">Run now</button>
+            </div>
+        </div>
+    </div>
+
+    <script type="module" src="app.js"></script>
+</body>
+</html>
