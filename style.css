@@ -398,6 +398,100 @@ main {
     margin-top: 2px;
 }
 
+/* Automation patterns */
+.pattern-row {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+    margin-bottom: 10px;
+}
+
+.pattern-row.disabled { opacity: 0.55; }
+
+.pattern-row .row-top {
+    display: flex;
+    gap: 10px;
+    align-items: end;
+    flex-wrap: wrap;
+}
+
+.pattern-row .field { margin-bottom: 0; flex: 1 1 110px; min-width: 0; }
+.pattern-row .field.narrow { flex: 0 0 100px; }
+.pattern-row .field.compact { flex: 0 0 80px; }
+
+.pattern-row select,
+.pattern-row input[type="text"],
+.pattern-row input[type="number"],
+.pattern-row input[type="time"] {
+    width: 100%;
+    background: var(--bg-elevated);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 8px;
+    outline: none;
+}
+
+.day-picker {
+    display: flex;
+    gap: 4px;
+    margin-top: 6px;
+    flex-wrap: wrap;
+}
+
+.day-picker label {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    cursor: pointer;
+    color: var(--text-dim);
+    font-size: 11px;
+    font-weight: 600;
+    user-select: none;
+}
+
+.day-picker input { display: none; }
+.day-picker input:checked + span {
+    color: var(--accent);
+}
+.day-picker label:has(input:checked) {
+    border-color: var(--accent);
+    background: rgba(76,194,255,0.1);
+}
+
+.pattern-row .toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-dim);
+}
+
+.pattern-row .row-bottom {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 10px;
+}
+
+.run-log {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 12px;
+    font-family: ui-monospace, Consolas, monospace;
+    font-size: 12px;
+    color: var(--text);
+    white-space: pre-wrap;
+    margin-top: 6px;
+}
+
 /* Section heading on dashboard */
 .section-title {
     font-size: 13px;

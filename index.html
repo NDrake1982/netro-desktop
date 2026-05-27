@@ -16,6 +16,7 @@
         <nav class="tabs">
             <button class="tab active" data-tab="dashboard">Dashboard</button>
             <button class="tab" data-tab="timeline">Timeline</button>
+            <button class="tab" data-tab="automation">Automation</button>
             <button class="tab" data-tab="settings">Settings</button>
         </nav>
         <button id="refresh-btn" class="icon-btn" title="Refresh">⟳</button>
@@ -46,6 +47,52 @@
             </div>
             <div id="timeline-content" class="timeline">
                 <div class="loading">Loading…</div>
+            </div>
+        </section>
+
+        <section id="automation" class="view">
+            <div class="settings-panel">
+                <h2>Cloudflare Worker</h2>
+                <p class="hint">
+                    Connect a Cloudflare Worker for recurring schedules that run automatically on
+                    Cloudflare's servers — no PC needed. Don't have one yet?
+                    <a href="worker/SETUP.md" target="_blank">Follow the 10-min setup guide</a>.
+                </p>
+                <label class="field">
+                    <span>Worker URL</span>
+                    <input id="worker-url" type="url" placeholder="https://your-worker.workers.dev">
+                </label>
+                <label class="field">
+                    <span>Auth token (the AUTH_TOKEN secret you set on the Worker)</span>
+                    <input id="worker-token" type="password" placeholder="paste your token">
+                </label>
+                <div style="display:flex; gap:10px; align-items:center;">
+                    <button class="btn-secondary" id="worker-connect">Connect</button>
+                    <span id="worker-status" class="hint" style="margin:0;"></span>
+                </div>
+
+                <div id="worker-panel" hidden>
+                    <h2>Recurring patterns</h2>
+                    <p class="hint">
+                        Each row is one zone running on selected days at a preferred UTC start time.
+                        The Worker's daily cron staggers them so combined flow never exceeds your borehole capacity.
+                    </p>
+                    <div id="patterns-list"></div>
+                    <button class="btn-secondary" id="add-pattern">+ Add pattern</button>
+
+                    <h2>Tools</h2>
+                    <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                        <button class="btn-secondary" id="sync-from-local">Sync controllers + borehole from this device</button>
+                        <button class="btn-secondary" id="run-now">Run today's schedule now</button>
+                    </div>
+
+                    <div id="last-run-info" class="hint" style="margin-top:14px;"></div>
+
+                    <div class="save-bar">
+                        <span id="worker-save-status"></span>
+                        <button class="btn-primary" id="save-worker-config">Save patterns</button>
+                    </div>
+                </div>
             </div>
         </section>
 

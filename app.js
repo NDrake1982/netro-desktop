@@ -17,6 +17,253 @@ function switchTab(name) {
     document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === name));
     if (name === 'settings') renderSettings();
     if (name === 'timeline') loadTimeline();
+    if (name === 'automation') initAutomationTab();
+}
+
+// ---------- Automation (Cloudflare Worker) ----------
+const WORKER_STORE = 'netro-desktop-worker-v1';
+let workerCfg = null; // loaded from the Worker when connected
+
+function loadWorkerCreds() {
+    const raw = localStorage.getItem(WORKER_STORE);
+    if (!raw) return { url: '', token: '' };
+    try { return JSON.parse(raw); } catch { return { url: '', token: '' }; }
+}
+
+function saveWorkerCreds(creds) {
+    localStorage.setItem(WORKER_STORE, JSON.stringify(creds));
+}
+
+function initAutomationTab() {
+    const creds = loadWorkerCreds();
+    document.getElementById('worker-url').value = creds.url || '';
+    document.getElementById('worker-token').value = creds.token || '';
+    if (creds.url && creds.token && !workerCfg) {
+        connectWorker(); // auto-reconnect on tab open if we already had creds
+    } else if (workerCfg) {
+        renderWorkerPanel();
+    }
+}
+
+async function connectWorker() {
+    const url = document.getElementById('worker-url').value.trim().replace(/\/$/, '');
+    const token = document.getElementById('worker-token').value.trim();
+    const status = document.getElementById('worker-status');
+
+    if (!url || !token) {
+        status.textContent = 'Enter URL and token first.';
+        return;
+    }
+
+    status.textContent = 'Connecting…';
+    try {
+        const statusResp = await fetch(`${url}/status`);
+        if (!statusResp.ok) throw new Error(`Worker /status returned ${statusResp.status}`);
+        const s = await statusResp.json();
+        if (!s.has_token) throw new Error('Worker has no AUTH_TOKEN secret set — see SETUP step 6.');
+
+        const cfgResp = await fetch(`${url}/config`, { headers: { Authorization: `Bearer ${token}` } });
+        if (cfgResp.status === 401) throw new Error('Auth token rejected by Worker.');
+        if (!cfgResp.ok) throw new Error(`/config returned ${cfgResp.status}`);
+
+        workerCfg = await cfgResp.json();
+        saveWorkerCreds({ url, token });
+        status.textContent = `Connected · Worker v${s.version}`;
+        renderWorkerPanel();
+    } catch (e) {
+        status.textContent = '';
+        toast('Connect failed: ' + e.message, 'error');
+    }
+}
+
+document.getElementById('worker-connect').addEventListener('click', connectWorker);
+
+function renderWorkerPanel() {
+    document.getElementById('worker-panel').hidden = false;
+    renderPatterns();
+    renderLastRun();
+}
+
+function renderPatterns() {
+    const list = document.getElementById('patterns-list');
+    if (!workerCfg.patterns?.length) {
+        list.innerHTML = `<p class="hint">No patterns yet. Click + Add pattern below.</p>`;
+        return;
+    }
+    list.innerHTML = workerCfg.patterns.map((p, i) => renderPatternRow(p, i)).join('');
+    wirePatternEvents();
+}
+
+function renderPatternRow(p, i) {
+    const dayLabels = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+    const controllerOpts = (workerCfg.controllers || []).map(c =>
+        `<option value="${escapeHtml(c.serial)}" ${c.serial === p.controller_serial ? 'selected' : ''}>${escapeHtml(c.nickname || c.serial)}</option>`
+    ).join('');
+    const days = Array.isArray(p.days) ? p.days : [];
+    const dayPicker = dayLabels.map((d, idx) => `
+        <label>
+            <input type="checkbox" data-day="${idx}" ${days.includes(idx) ? 'checked' : ''}>
+            <span>${d}</span>
+        </label>
+    `).join('');
+
+    return `
+        <div class="pattern-row ${p.enabled === false ? 'disabled' : ''}" data-i="${i}">
+            <div class="row-top">
+                <label class="field">
+                    <span>Controller</span>
+                    <select class="p-controller">
+                        <option value="">— select —</option>
+                        ${controllerOpts}
+                    </select>
+                </label>
+                <label class="field compact">
+                    <span>Zone</span>
+                    <input class="p-zone" type="number" min="1" max="24" value="${p.zone ?? 1}">
+                </label>
+                <label class="field narrow">
+                    <span>Time (UTC)</span>
+                    <input class="p-time" type="time" value="${escapeHtml(p.preferred_time_utc || '06:00')}">
+                </label>
+                <label class="field compact">
+                    <span>Minutes</span>
+                    <input class="p-dur" type="number" min="1" max="240" value="${p.duration_min ?? 10}">
+                </label>
+                <label class="field">
+                    <span>Note</span>
+                    <input class="p-note" type="text" value="${escapeHtml(p.note || '')}" placeholder="e.g. Front Grass">
+                </label>
+            </div>
+            <div class="row-bottom">
+                <div class="day-picker">${dayPicker}</div>
+                <div style="display:flex; gap:14px; align-items:center;">
+                    <label class="toggle">
+                        <input class="p-enabled" type="checkbox" ${p.enabled !== false ? 'checked' : ''}>
+                        Enabled
+                    </label>
+                    <button class="btn-danger" data-remove-pattern="${i}">Remove</button>
+                </div>
+            </div>
+        </div>`;
+}
+
+function wirePatternEvents() {
+    document.querySelectorAll('[data-remove-pattern]').forEach(b => {
+        b.addEventListener('click', () => {
+            capturePatternsToWorkerCfg();
+            workerCfg.patterns.splice(+b.dataset.removePattern, 1);
+            renderPatterns();
+        });
+    });
+}
+
+function capturePatternsToWorkerCfg() {
+    const rows = [...document.querySelectorAll('.pattern-row')];
+    workerCfg.patterns = rows.map(row => {
+        const days = [...row.querySelectorAll('.day-picker input:checked')].map(i => +i.dataset.day);
+        const existing = workerCfg.patterns[+row.dataset.i] || {};
+        return {
+            id: existing.id || (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2)),
+            enabled: row.querySelector('.p-enabled').checked,
+            controller_serial: row.querySelector('.p-controller').value.trim().toLowerCase(),
+            zone: parseInt(row.querySelector('.p-zone').value) || 1,
+            preferred_time_utc: row.querySelector('.p-time').value || '06:00',
+            duration_min: parseInt(row.querySelector('.p-dur').value) || 10,
+            note: row.querySelector('.p-note').value.trim(),
+            days,
+        };
+    });
+}
+
+document.getElementById('add-pattern').addEventListener('click', () => {
+    if (!workerCfg) return;
+    capturePatternsToWorkerCfg();
+    workerCfg.patterns = workerCfg.patterns || [];
+    workerCfg.patterns.push({
+        id: crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2),
+        enabled: true,
+        controller_serial: workerCfg.controllers?.[0]?.serial || '',
+        zone: 1,
+        days: [1, 3, 5], // Mon/Wed/Fri default
+        preferred_time_utc: '06:00',
+        duration_min: 10,
+        note: '',
+    });
+    renderPatterns();
+});
+
+document.getElementById('sync-from-local').addEventListener('click', () => {
+    if (!workerCfg) return;
+    workerCfg.controllers = config.controllers.map(c => ({
+        serial: c.serial,
+        nickname: c.nickname,
+    }));
+    workerCfg.borehole_capacity_lpm = config.borehole_capacity_lpm ?? workerCfg.borehole_capacity_lpm;
+    workerCfg.default_zone_flow_lpm = config.default_zone_flow_lpm ?? workerCfg.default_zone_flow_lpm;
+    renderPatterns(); // controller dropdowns will repopulate
+    toast(`Synced ${workerCfg.controllers.length} controllers + borehole capacity`, 'success');
+});
+
+document.getElementById('save-worker-config').addEventListener('click', async () => {
+    if (!workerCfg) return;
+    capturePatternsToWorkerCfg();
+    const status = document.getElementById('worker-save-status');
+    status.textContent = 'Saving…';
+    const creds = loadWorkerCreds();
+    try {
+        const r = await fetch(`${creds.url}/config`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${creds.token}` },
+            body: JSON.stringify(workerCfg),
+        });
+        if (!r.ok) throw new Error(`save returned ${r.status}`);
+        status.textContent = 'Saved';
+        toast('Patterns saved to Worker', 'success');
+        setTimeout(() => status.textContent = '', 2500);
+    } catch (e) {
+        status.textContent = '';
+        toast('Save failed: ' + e.message, 'error');
+    }
+});
+
+document.getElementById('run-now').addEventListener('click', async () => {
+    if (!workerCfg) return;
+    const creds = loadWorkerCreds();
+    toast('Running today\'s schedule on the Worker…');
+    try {
+        const r = await fetch(`${creds.url}/run-now`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${creds.token}` },
+        });
+        if (!r.ok) throw new Error(`run-now returned ${r.status}`);
+        const result = await r.json();
+        workerCfg.last_run = result;
+        renderLastRun();
+        toast(`Queued ${result.placed} watering${result.placed !== 1 ? 's' : ''}${result.failed ? ` (${result.failed} failed)` : ''}`, result.failed ? 'error' : 'success');
+    } catch (e) {
+        toast('Run failed: ' + e.message, 'error');
+    }
+});
+
+function renderLastRun() {
+    const el = document.getElementById('last-run-info');
+    if (!workerCfg.last_run) {
+        el.textContent = 'No runs recorded yet.';
+        return;
+    }
+    const r = workerCfg.last_run;
+    const when = new Date(r.ts).toLocaleString();
+    const lines = [`Last run: ${when} — placed ${r.placed}${r.failed ? `, failed ${r.failed}` : ''}`];
+    if (r.message) lines.push(`  ${r.message}`);
+    for (const p of r.pushed || []) {
+        const name = workerCfg.controllers?.find(c => c.serial === p.serial)?.nickname || p.serial;
+        lines.push(`  ✓ ${name} zone ${p.zone} @ ${new Date(p.start).toLocaleTimeString()} for ${p.duration} min`);
+    }
+    for (const f of r.failed || []) {
+        const name = workerCfg.controllers?.find(c => c.serial === f.serial)?.nickname || f.serial;
+        lines.push(`  ✗ ${name} zone ${f.zone}: ${f.error}`);
+    }
+    el.innerHTML = `<div class="run-log">${escapeHtml(lines.join('\n'))}</div>`;
 }
 
 // ---------- Timeline ----------
