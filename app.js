@@ -1,5 +1,5 @@
 import { netro } from './netro.js';
-import { loadConfig, saveConfig, hasController, defaultConfig } from './config.js';
+import { loadConfig, saveConfig, hasController, hasSensor, defaultConfig } from './config.js';
 
 // ---------- State ----------
 let config = loadConfig();
@@ -33,35 +33,147 @@ async function loadDashboard() {
     const refresh = document.getElementById('refresh-btn');
     refresh.classList.add('spinning');
     try {
-        const container = document.getElementById('controllers');
-
-        if (!hasController(config)) {
-            container.innerHTML = `
-                <div class="empty-state">
-                    <h3>No controllers yet</h3>
-                    <p>Add your first Netro controller in Settings to get started.</p>
-                    <button class="btn-primary" id="empty-go-settings">Open Settings</button>
-                </div>`;
-            document.getElementById('empty-go-settings').addEventListener('click', () => switchTab('settings'));
-            return;
-        }
-
-        const cards = await Promise.all(config.controllers.map(async c => {
-            try {
-                const info = await netro.info(c.serial);
-                return renderControllerCard(c, info, null);
-            } catch (e) {
-                return renderControllerCard(c, null, e.message);
-            }
-        }));
-
-        container.innerHTML = cards.join('');
-        wireCardEvents();
+        await Promise.all([loadControllers(), loadSensors()]);
     } catch (e) {
         toast('Failed to load: ' + e.message, 'error');
     } finally {
         refresh.classList.remove('spinning');
     }
+}
+
+async function loadControllers() {
+    const container = document.getElementById('controllers');
+
+    if (!hasController(config)) {
+        container.innerHTML = `
+            <div class="empty-state">
+                <h3>No controllers yet</h3>
+                <p>Add your first Netro controller in Settings to get started.</p>
+                <button class="btn-primary" id="empty-go-settings">Open Settings</button>
+            </div>`;
+        document.getElementById('empty-go-settings').addEventListener('click', () => switchTab('settings'));
+        return;
+    }
+
+    const cards = await Promise.all(config.controllers.map(async c => {
+        try {
+            const info = await netro.info(c.serial);
+            return renderControllerCard(c, info, null);
+        } catch (e) {
+            return renderControllerCard(c, null, e.message);
+        }
+    }));
+
+    container.innerHTML = cards.join('');
+    wireCardEvents();
+}
+
+async function loadSensors() {
+    const section = document.getElementById('sensors-section');
+    const grid = document.getElementById('sensors');
+
+    if (!hasSensor(config)) {
+        section.hidden = true;
+        return;
+    }
+    section.hidden = false;
+
+    const cards = await Promise.all(config.sensors.map(async s => {
+        try {
+            const [info, dataArr] = await Promise.all([
+                netro.sensorInfo(s.serial),
+                netro.sensorData(s.serial).catch(() => []),
+            ]);
+            const latest = dataArr.length ? dataArr[dataArr.length - 1] : null;
+            return renderSensorCard(s, info, latest, null);
+        } catch (e) {
+            return renderSensorCard(s, null, null, e.message);
+        }
+    }));
+
+    grid.innerHTML = cards.join('');
+}
+
+function renderSensorCard(cfg, info, latest, errorMsg) {
+    const name = cfg.nickname || info?.name || 'Sensor';
+
+    if (errorMsg) {
+        return `
+            <div class="sensor-card">
+                <div class="sensor-card-header">
+                    <div>
+                        <h3 class="sensor-name">${escapeHtml(name)}</h3>
+                        <div class="sensor-serial">${escapeHtml(cfg.serial)}</div>
+                    </div>
+                    <span class="status-pill offline">error</span>
+                </div>
+                <div class="sensor-footer">${escapeHtml(errorMsg)}</div>
+            </div>`;
+    }
+
+    const status = (info.status || '').toUpperCase();
+    const isOffline = status === 'OFFLINE';
+    const statusClass = isOffline ? 'offline' : '';
+    const statusText = isOffline ? 'offline' : status.toLowerCase() || 'online';
+
+    const batteryPct = info.battery_level != null ? Math.round(info.battery_level * 100) : null;
+    const batteryClass = batteryPct == null ? '' : (batteryPct < 20 ? 'bad' : (batteryPct < 40 ? 'warn' : ''));
+    const batteryDisplay = batteryPct != null ? `${batteryPct}%` : '—';
+
+    // Latest reading: moisture (%) and temperature (°C). Light if present.
+    const moisture = latest?.moisture != null ? `${Math.round(latest.moisture)}%` : '—';
+    const temp = latest?.celsius != null
+        ? `${latest.celsius.toFixed(1)}°C`
+        : (latest?.fahrenheit != null ? `${(((latest.fahrenheit - 32) * 5) / 9).toFixed(1)}°C` : '—');
+
+    const lastSeen = info.last_active ? formatAgo(info.last_active) : 'never';
+
+    return `
+        <div class="sensor-card">
+            <div class="sensor-card-header">
+                <div>
+                    <h3 class="sensor-name">${escapeHtml(name)}</h3>
+                    <div class="sensor-serial">${escapeHtml(cfg.serial)}</div>
+                </div>
+                <span class="status-pill ${statusClass}">${statusText}</span>
+            </div>
+            <div class="sensor-metrics">
+                <div class="metric">
+                    <div class="metric-label">Moisture</div>
+                    <div class="metric-value">${moisture}</div>
+                </div>
+                <div class="metric">
+                    <div class="metric-label">Temperature</div>
+                    <div class="metric-value">${temp}</div>
+                </div>
+                <div class="metric">
+                    <div class="metric-label">Battery</div>
+                    <div class="metric-value ${batteryClass}">${batteryDisplay}</div>
+                </div>
+                <div class="metric">
+                    <div class="metric-label">Last seen</div>
+                    <div class="metric-value" style="font-size:13px;">${lastSeen}</div>
+                </div>
+            </div>
+        </div>`;
+}
+
+function formatAgo(iso) {
+    const then = new Date(iso);
+    if (isNaN(then)) return iso;
+    const diffMs = Date.now() - then.getTime();
+    const sec = Math.floor(diffMs / 1000);
+    if (sec < 60) return 'just now';
+    const min = Math.floor(sec / 60);
+    if (min < 60) return `${min} min ago`;
+    const hr = Math.floor(min / 60);
+    if (hr < 24) return `${hr} hr ago`;
+    const day = Math.floor(hr / 24);
+    if (day < 30) return `${day} day${day > 1 ? 's' : ''} ago`;
+    const mo = Math.floor(day / 30);
+    if (mo < 12) return `${mo} mo ago`;
+    const yr = Math.floor(day / 365);
+    return `${yr} yr${yr > 1 ? 's' : ''} ago`;
 }
 
 function renderControllerCard(cfg, info, errorMsg) {
@@ -189,21 +301,47 @@ document.addEventListener('keydown', (e) => {
 function renderSettings() {
     document.getElementById('borehole-lpm').value = config.borehole_capacity_lpm ?? '';
 
-    const list = document.getElementById('controller-edit-list');
-    if (!config.controllers.length) {
-        list.innerHTML = `<p class="hint" style="color:var(--text-dim);">No controllers added yet. Click + Add controller below.</p>`;
+    renderEditList(
+        'controller-edit-list',
+        config.controllers,
+        'controller',
+        'Cart Lodge',
+        i => {
+            captureSettingsToConfig();
+            config.controllers.splice(i, 1);
+            renderSettings();
+        }
+    );
+
+    renderEditList(
+        'sensor-edit-list',
+        config.sensors,
+        'sensor',
+        'Yew Hedge sensor',
+        i => {
+            captureSettingsToConfig();
+            config.sensors.splice(i, 1);
+            renderSettings();
+        }
+    );
+}
+
+function renderEditList(elementId, items, kind, nicknamePlaceholder, onRemove) {
+    const list = document.getElementById(elementId);
+    if (!items.length) {
+        list.innerHTML = `<p class="hint">No ${kind}s added yet. Click + Add ${kind} below.</p>`;
         return;
     }
-    list.innerHTML = config.controllers.map((c, i) => `
+    list.innerHTML = items.map((c, i) => `
         <div class="controller-edit-row" data-i="${i}">
             <div class="row-head">
                 <label class="field">
                     <span>Nickname</span>
-                    <input class="ec-nick" type="text" value="${escapeHtml(c.nickname || '')}" placeholder="e.g. Cart Lodge">
+                    <input class="ec-nick-${kind}" type="text" value="${escapeHtml(c.nickname || '')}" placeholder="e.g. ${escapeHtml(nicknamePlaceholder)}">
                 </label>
                 <label class="field">
                     <span>Serial number</span>
-                    <input class="ec-serial" type="text" value="${escapeHtml(c.serial || '')}" placeholder="12-char hex">
+                    <input class="ec-serial-${kind}" type="text" value="${escapeHtml(c.serial || '')}" placeholder="12-char hex">
                 </label>
                 <button class="btn-danger" data-remove="${i}">Remove</button>
             </div>
@@ -211,24 +349,26 @@ function renderSettings() {
     `).join('');
 
     list.querySelectorAll('[data-remove]').forEach(b => {
-        b.addEventListener('click', () => {
-            const i = +b.dataset.remove;
-            // First write current input values into config so we don't lose unsaved edits.
-            captureSettingsToConfig();
-            config.controllers.splice(i, 1);
-            renderSettings();
-        });
+        b.addEventListener('click', () => onRemove(+b.dataset.remove));
     });
 }
 
 function captureSettingsToConfig() {
-    const nicks = [...document.querySelectorAll('.ec-nick')];
-    const serials = [...document.querySelectorAll('.ec-serial')];
-    config.controllers = nicks.map((n, i) => ({
-        serial: serials[i].value.trim().toLowerCase(),
+    const cNicks = [...document.querySelectorAll('.ec-nick-controller')];
+    const cSerials = [...document.querySelectorAll('.ec-serial-controller')];
+    config.controllers = cNicks.map((n, i) => ({
+        serial: cSerials[i].value.trim().toLowerCase(),
         nickname: n.value.trim() || 'Controller',
         zone_flow_lpm: config.controllers[i]?.zone_flow_lpm ?? {},
     }));
+
+    const sNicks = [...document.querySelectorAll('.ec-nick-sensor')];
+    const sSerials = [...document.querySelectorAll('.ec-serial-sensor')];
+    config.sensors = sNicks.map((n, i) => ({
+        serial: sSerials[i].value.trim().toLowerCase(),
+        nickname: n.value.trim(),
+    }));
+
     const bh = document.getElementById('borehole-lpm').value;
     config.borehole_capacity_lpm = bh ? parseFloat(bh) : null;
 }
@@ -239,29 +379,37 @@ document.getElementById('add-controller').addEventListener('click', () => {
     renderSettings();
 });
 
+document.getElementById('add-sensor').addEventListener('click', () => {
+    captureSettingsToConfig();
+    config.sensors.push({ serial: '', nickname: '' });
+    renderSettings();
+});
+
 document.getElementById('save-config').addEventListener('click', async () => {
     captureSettingsToConfig();
 
     // Drop rows without a serial.
     config.controllers = config.controllers.filter(c => c.serial);
+    config.sensors = config.sensors.filter(s => s.serial);
 
     const status = document.getElementById('save-status');
     status.textContent = 'Validating…';
 
-    // Quick validation: try to fetch info for each controller; flag any that fail.
+    // Quick validation: ping each device; flag any that fail.
     const failures = [];
     for (const c of config.controllers) {
-        try {
-            await netro.info(c.serial);
-        } catch (e) {
-            failures.push(`${c.nickname || c.serial}: ${e.message}`);
-        }
+        try { await netro.info(c.serial); }
+        catch (e) { failures.push(`${c.nickname || c.serial}: ${e.message}`); }
+    }
+    for (const s of config.sensors) {
+        try { await netro.sensorInfo(s.serial); }
+        catch (e) { failures.push(`${s.nickname || s.serial}: ${e.message}`); }
     }
 
     saveConfig(config);
     status.textContent = failures.length ? 'Saved with warnings' : 'Saved';
     if (failures.length) {
-        toast('Saved, but some controllers failed: ' + failures.join('; '), 'error');
+        toast('Saved, but some devices failed: ' + failures.join('; '), 'error');
     } else {
         toast('Settings saved', 'success');
     }

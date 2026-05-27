@@ -6,6 +6,7 @@ const STORAGE_KEY = 'netro-desktop-config-v1';
 export function defaultConfig() {
     return {
         controllers: [],
+        sensors: [],
         borehole_capacity_lpm: null,
     };
 }
@@ -16,6 +17,7 @@ export function loadConfig() {
     try {
         const cfg = JSON.parse(raw);
         if (!Array.isArray(cfg.controllers)) cfg.controllers = [];
+        if (!Array.isArray(cfg.sensors)) cfg.sensors = [];
         return cfg;
     } catch {
         return defaultConfig();
@@ -28,4 +30,8 @@ export function saveConfig(cfg) {
 
 export function hasController(cfg) {
     return Array.isArray(cfg.controllers) && cfg.controllers.length > 0;
+}
+
+export function hasSensor(cfg) {
+    return Array.isArray(cfg.sensors) && cfg.sensors.length > 0;
 }

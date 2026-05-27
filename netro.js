@@ -33,6 +33,17 @@ export const netro = {
         return d.device;
     },
 
+    // Whisperer plant sensors share the same /info endpoint but the payload is `sensor` not `device`.
+    async sensorInfo(serial) {
+        const d = await call('GET', '/info.json', { key: serial });
+        return d.sensor;
+    },
+
+    async sensorData(serial, { start_date, end_date } = {}) {
+        const d = await call('GET', '/sensor_data.json', { key: serial, start_date, end_date });
+        return d.sensor_data || [];
+    },
+
     async schedules(serial, { start_date, end_date } = {}) {
         const d = await call('GET', '/schedules.json', { key: serial, start_date, end_date });
         return d.schedules || [];

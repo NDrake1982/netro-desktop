@@ -221,6 +221,85 @@ main {
     border-top: 1px solid var(--border);
 }
 
+/* Section heading on dashboard */
+.section-title {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-dim);
+    margin: 32px 0 14px;
+    font-weight: 600;
+}
+
+/* Sensors */
+.sensor-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 14px;
+}
+
+.sensor-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+    box-shadow: var(--shadow);
+}
+
+.sensor-card-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 12px;
+}
+
+.sensor-name { font-size: 14px; font-weight: 600; margin: 0 0 2px; }
+.sensor-serial {
+    font-size: 10px;
+    color: var(--text-dim);
+    font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+
+.sensor-metrics {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
+.metric {
+    background: var(--bg-elevated);
+    border-radius: 6px;
+    padding: 8px 10px;
+}
+
+.metric-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    color: var(--text-dim);
+}
+
+.metric-value {
+    font-size: 16px;
+    font-weight: 600;
+    margin-top: 2px;
+}
+
+.metric-value.warn { color: var(--amber); }
+.metric-value.bad { color: var(--red); }
+
+.sensor-footer {
+    font-size: 11px;
+    color: var(--text-dim);
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+}
+
 /* Settings */
 .settings-panel { max-width: 720px; }
 

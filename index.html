@@ -26,6 +26,11 @@
             <div id="controllers" class="controller-grid">
                 <div class="loading">Loading…</div>
             </div>
+
+            <div id="sensors-section" hidden>
+                <h2 class="section-title">Sensors</h2>
+                <div id="sensors" class="sensor-grid"></div>
+            </div>
         </section>
 
         <section id="timeline" class="view">
@@ -49,6 +54,14 @@
                 </p>
                 <div id="controller-edit-list"></div>
                 <button id="add-controller" class="btn-secondary">+ Add controller</button>
+
+                <h2>Plant sensors (Whisperer)</h2>
+                <p class="hint">
+                    Optional. Each Whisperer has its own serial. Sensors show soil moisture, temperature,
+                    light, and battery — and warn you when one goes offline.
+                </p>
+                <div id="sensor-edit-list"></div>
+                <button id="add-sensor" class="btn-secondary">+ Add sensor</button>
 
                 <h2>Privacy</h2>
                 <p class="hint">
