@@ -18,6 +18,8 @@ function parseNetroTime(s) {
 let config = defaultConfig(); // populated by initConfig() below
 let configSource = 'local';   // 'cloud' | 'cache' | 'local' — drives the sync indicator
 let runCtx = null;
+let dashboardControllerInfos = new Map(); // serial -> netro device info, cached so status-bar refresh
+                                          // only needs /schedules calls (saves API budget).
 
 async function initConfig() {
     const { cfg, source } = await loadConfig();
@@ -619,16 +621,15 @@ async function loadStatusBar() {
     const startStr = toIsoDate(today);
     const endStr = toIsoDate(tomorrow);
 
-    // Need info too so we can label by zone name.
+    // Use cached device info (set by loadControllers) so the periodic refresh
+    // only burns one API call per controller per minute, not two.
     const all = await Promise.all(config.controllers.map(async c => {
+        const info = dashboardControllerInfos.get(c.serial) || null;
         try {
-            const [info, scheds] = await Promise.all([
-                netro.info(c.serial),
-                netro.schedules(c.serial, { start_date: startStr, end_date: endStr }),
-            ]);
+            const scheds = await netro.schedules(c.serial, { start_date: startStr, end_date: endStr });
             return { cfg: c, info, scheds };
         } catch {
-            return { cfg: c, info: null, scheds: [] };
+            return { cfg: c, info, scheds: [] };
         }
     }));
 
@@ -693,6 +694,31 @@ function isTomorrow(d) {
     return d.getDate() === t.getDate() && d.getMonth() === t.getMonth() && d.getFullYear() === t.getFullYear();
 }
 
+// ---------- Status bar auto-refresh ----------
+// Runs every 60s; skips when not on the Dashboard tab, when the browser tab is hidden,
+// or when there are no controllers yet. Also refreshes immediately on tab-becomes-visible.
+let statusBarTimer = null;
+const STATUS_REFRESH_MS = 60_000;
+
+function shouldRefreshStatusBar() {
+    return document.visibilityState === 'visible'
+        && document.getElementById('dashboard').classList.contains('active')
+        && hasController(config);
+}
+
+function startStatusBarAutoRefresh() {
+    if (statusBarTimer) clearInterval(statusBarTimer);
+    statusBarTimer = setInterval(() => {
+        if (shouldRefreshStatusBar()) loadStatusBar().catch(() => {});
+    }, STATUS_REFRESH_MS);
+}
+
+document.addEventListener('visibilitychange', () => {
+    if (shouldRefreshStatusBar()) loadStatusBar().catch(() => {});
+});
+
+startStatusBarAutoRefresh();
+
 async function loadControllers() {
     const container = document.getElementById('controllers');
 
@@ -710,6 +736,7 @@ async function loadControllers() {
     const cards = await Promise.all(config.controllers.map(async c => {
         try {
             const info = await netro.info(c.serial);
+            dashboardControllerInfos.set(c.serial, info);
             return renderControllerCard(c, info, null);
         } catch (e) {
             return renderControllerCard(c, null, e.message);
