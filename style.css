@@ -221,6 +221,67 @@ main {
     border-top: 1px solid var(--border);
 }
 
+/* Status bar (Dashboard top) */
+.status-bar {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    padding: 12px 18px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    margin-bottom: 18px;
+    box-shadow: var(--shadow);
+    flex-wrap: wrap;
+}
+
+.status-bar.live {
+    border-color: rgba(63,185,80,0.4);
+    box-shadow: 0 0 0 1px rgba(63,185,80,0.25), var(--shadow);
+}
+
+.status-cell {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    flex: 1;
+}
+
+.status-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-dim);
+    font-weight: 600;
+}
+
+.status-value {
+    font-size: 13px;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.status-value.running::before {
+    content: "●";
+    color: var(--green);
+    margin-right: 6px;
+    animation: status-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes status-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+}
+
+.status-divider {
+    color: var(--text-dim);
+    font-size: 16px;
+    flex: 0 0 auto;
+}
+
 /* Timeline */
 .timeline-header {
     display: flex;

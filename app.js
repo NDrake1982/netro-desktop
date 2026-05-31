@@ -561,12 +561,98 @@ async function loadDashboard() {
     const refresh = document.getElementById('refresh-btn');
     refresh.classList.add('spinning');
     try {
-        await Promise.all([loadControllers(), loadSensors()]);
+        await Promise.all([loadControllers(), loadSensors(), loadStatusBar()]);
     } catch (e) {
         toast('Failed to load: ' + e.message, 'error');
     } finally {
         refresh.classList.remove('spinning');
     }
+}
+
+// Fetch a 48h window of schedules across all controllers, compute what's running
+// right now and what's next, and render the top status bar.
+async function loadStatusBar() {
+    const bar = document.getElementById('status-bar');
+    const nowEl = document.getElementById('status-now');
+    const nextEl = document.getElementById('status-next');
+
+    if (!hasController(config)) {
+        bar.hidden = true;
+        return;
+    }
+    bar.hidden = false;
+
+    const today = new Date();
+    const tomorrow = new Date(today.getTime() + 86400000);
+    const startStr = toIsoDate(today);
+    const endStr = toIsoDate(tomorrow);
+
+    // Need info too so we can label by zone name.
+    const all = await Promise.all(config.controllers.map(async c => {
+        try {
+            const [info, scheds] = await Promise.all([
+                netro.info(c.serial),
+                netro.schedules(c.serial, { start_date: startStr, end_date: endStr }),
+            ]);
+            return { cfg: c, info, scheds };
+        } catch {
+            return { cfg: c, info: null, scheds: [] };
+        }
+    }));
+
+    const now = Date.now();
+    const running = [];
+    const upcoming = [];
+    for (const { cfg, info, scheds } of all) {
+        for (const s of scheds) {
+            const st = new Date(s.start_time).getTime();
+            const en = new Date(s.end_time).getTime();
+            const zoneName = info?.zones?.find(z => z.ith === s.zone)?.name || `Zone ${s.zone}`;
+            if (st <= now && en > now) {
+                running.push({ cfg, zone: s.zone, zoneName, endMs: en });
+            } else if (st > now) {
+                upcoming.push({ cfg, zone: s.zone, zoneName, startMs: st, durMs: en - st });
+            }
+        }
+    }
+
+    // Render "Now"
+    if (running.length === 0) {
+        nowEl.className = 'status-value';
+        nowEl.textContent = 'Nothing running';
+        bar.classList.remove('live');
+    } else {
+        nowEl.className = 'status-value running';
+        nowEl.textContent = running
+            .map(r => `${r.cfg.nickname} · ${r.zoneName} (${formatRemaining(r.endMs - now)} left)`)
+            .join(' · ');
+        bar.classList.add('live');
+    }
+
+    // Render "Next"
+    upcoming.sort((a, b) => a.startMs - b.startMs);
+    if (upcoming.length === 0) {
+        nextEl.textContent = 'No waterings in next 48h';
+    } else {
+        const u = upcoming[0];
+        const startTime = new Date(u.startMs).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false });
+        const whenSuffix = isTomorrow(new Date(u.startMs)) ? ' tomorrow' : '';
+        nextEl.textContent = `${u.cfg.nickname} · ${u.zoneName} at ${startTime}${whenSuffix} (in ${formatRemaining(u.startMs - now)})`;
+    }
+}
+
+function formatRemaining(ms) {
+    const min = Math.max(0, Math.round(ms / 60000));
+    if (min < 60) return `${min} min`;
+    const hr = Math.floor(min / 60);
+    const rem = min % 60;
+    return rem ? `${hr}h ${rem}m` : `${hr}h`;
+}
+
+function isTomorrow(d) {
+    const t = new Date();
+    t.setDate(t.getDate() + 1);
+    return d.getDate() === t.getDate() && d.getMonth() === t.getMonth() && d.getFullYear() === t.getFullYear();
 }
 
 async function loadControllers() {

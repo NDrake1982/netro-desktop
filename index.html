@@ -24,6 +24,18 @@
 
     <main>
         <section id="dashboard" class="view active">
+            <div id="status-bar" class="status-bar" hidden>
+                <div class="status-cell">
+                    <span class="status-label">Now</span>
+                    <span id="status-now" class="status-value">—</span>
+                </div>
+                <div class="status-divider">→</div>
+                <div class="status-cell">
+                    <span class="status-label">Next</span>
+                    <span id="status-next" class="status-value">—</span>
+                </div>
+            </div>
+
             <div id="controllers" class="controller-grid">
                 <div class="loading">Loading…</div>
             </div>
