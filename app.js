@@ -621,12 +621,19 @@ async function loadStatusBar() {
     const startStr = toIsoDate(today);
     const endStr = toIsoDate(tomorrow);
 
-    // Use cached device info (set by loadControllers) so the periodic refresh
-    // only burns one API call per controller per minute, not two.
+    // Prefer cached device info (set by loadControllers). On first paint the
+    // cache may not be populated yet — fall back to fetching /info ourselves so
+    // we always have zone names, then cache for subsequent refreshes.
     const all = await Promise.all(config.controllers.map(async c => {
-        const info = dashboardControllerInfos.get(c.serial) || null;
+        let info = dashboardControllerInfos.get(c.serial) || null;
         try {
-            const scheds = await netro.schedules(c.serial, { start_date: startStr, end_date: endStr });
+            const tasks = [netro.schedules(c.serial, { start_date: startStr, end_date: endStr })];
+            if (!info) tasks.push(netro.info(c.serial));
+            const [scheds, fetchedInfo] = await Promise.all(tasks);
+            if (fetchedInfo) {
+                info = fetchedInfo;
+                dashboardControllerInfos.set(c.serial, fetchedInfo);
+            }
             return { cfg: c, info, scheds };
         } catch {
             return { cfg: c, info, scheds: [] };
