@@ -617,10 +617,11 @@ async function loadStatusBar() {
             const st = parseNetroTime(s.start_time).getTime();
             const en = parseNetroTime(s.end_time).getTime();
             const zoneName = info?.zones?.find(z => z.ith === s.zone)?.name || `Zone ${s.zone}`;
+            const tag = sourceTag(s.source);
             if (st <= now && en > now) {
-                running.push({ cfg, zone: s.zone, zoneName, endMs: en });
+                running.push({ cfg, zone: s.zone, zoneName, endMs: en, tag });
             } else if (st > now) {
-                upcoming.push({ cfg, zone: s.zone, zoneName, startMs: st, durMs: en - st });
+                upcoming.push({ cfg, zone: s.zone, zoneName, startMs: st, durMs: en - st, tag });
             }
         }
     }
@@ -633,7 +634,7 @@ async function loadStatusBar() {
     } else {
         nowEl.className = 'status-value running';
         nowEl.textContent = running
-            .map(r => `${r.cfg.nickname} · ${r.zoneName} (${formatRemaining(r.endMs - now)} left)`)
+            .map(r => `${r.cfg.nickname} · ${r.zoneName} ${r.tag} (${formatRemaining(r.endMs - now)} left)`)
             .join(' · ');
         bar.classList.add('live');
     }
@@ -646,8 +647,13 @@ async function loadStatusBar() {
         const u = upcoming[0];
         const startTime = new Date(u.startMs).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false });
         const whenSuffix = isTomorrow(new Date(u.startMs)) ? ' tomorrow' : '';
-        nextEl.textContent = `${u.cfg.nickname} · ${u.zoneName} at ${startTime}${whenSuffix} (in ${formatRemaining(u.startMs - now)})`;
+        nextEl.textContent = `${u.cfg.nickname} · ${u.zoneName} ${u.tag} at ${startTime}${whenSuffix} (in ${formatRemaining(u.startMs - now)})`;
     }
+}
+
+// Convert Netro schedule source into a short tag. MANUAL = (M), anything else = (P).
+function sourceTag(source) {
+    return (source || '').toUpperCase() === 'MANUAL' ? '(M)' : '(P)';
 }
 
 function formatRemaining(ms) {
