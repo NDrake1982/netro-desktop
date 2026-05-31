@@ -1068,6 +1068,51 @@ document.getElementById('add-controller').addEventListener('click', () => {
     renderSettings();
 });
 
+document.getElementById('pull-names').addEventListener('click', async () => {
+    captureSettingsToConfig();
+    if (!hasController(config) && !hasSensor(config)) {
+        toast('Add a serial first.', 'error');
+        return;
+    }
+
+    const status = document.getElementById('save-status');
+    status.textContent = 'Pulling names from Netro…';
+
+    let changed = 0;
+    const failures = [];
+
+    await Promise.all([
+        ...config.controllers.map(async c => {
+            if (!c.serial) return;
+            try {
+                const info = await netro.info(c.serial);
+                if (info?.name && info.name !== c.nickname) {
+                    c.nickname = info.name;
+                    changed++;
+                }
+            } catch (e) { failures.push(`${c.serial}: ${e.message}`); }
+        }),
+        ...config.sensors.map(async s => {
+            if (!s.serial) return;
+            try {
+                const info = await netro.sensorInfo(s.serial);
+                if (info?.name && info.name !== s.nickname) {
+                    s.nickname = info.name;
+                    changed++;
+                }
+            } catch (e) { failures.push(`${s.serial}: ${e.message}`); }
+        }),
+    ]);
+
+    renderSettings();
+    status.textContent = '';
+    if (failures.length) {
+        toast(`Pulled ${changed}; ${failures.length} failed`, 'error');
+    } else {
+        toast(changed ? `Updated ${changed} name${changed > 1 ? 's' : ''}. Hit Save to keep.` : 'All names already matched Netro.', 'success');
+    }
+});
+
 document.getElementById('add-sensor').addEventListener('click', () => {
     captureSettingsToConfig();
     config.sensors.push({ serial: '', nickname: '' });

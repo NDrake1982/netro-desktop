@@ -127,7 +127,10 @@
                     open the controller → Settings → look for "Serial number".
                 </p>
                 <div id="controller-edit-list"></div>
-                <button id="add-controller" class="btn-secondary">+ Add controller</button>
+                <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:6px;">
+                    <button id="add-controller" class="btn-secondary">+ Add controller</button>
+                    <button id="pull-names" class="btn-secondary" title="Fetch each device's current name from the Netro cloud and copy it into the nickname field above. Click Save afterwards to keep the changes.">↻ Pull names from Netro</button>
+                </div>
 
                 <h2>Plant sensors (Whisperer)</h2>
                 <p class="hint">
