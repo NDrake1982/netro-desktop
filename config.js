@@ -80,12 +80,22 @@ export async function loadConfig() {
     if (hasWorkerCreds()) {
         try {
             const cloud = normalize(await fetchFromWorker());
-            // Migration: if cloud is missing things that local has (e.g. sensors
-            // not yet pushed up), surface local values so nothing's lost. The
-            // next save will persist them.
-            if (cached.sensors?.length && !cloud.sensors?.length) cloud.sensors = cached.sensors;
-            if (cached.controllers?.length && !cloud.controllers?.length) cloud.controllers = cached.controllers;
+            // First-time migration: if cloud is missing things this device has
+            // cached, surface them AND push them up so other devices get them too.
+            let needsBackPush = false;
+            if (cached.sensors?.length && !cloud.sensors?.length) {
+                cloud.sensors = cached.sensors;
+                needsBackPush = true;
+            }
+            if (cached.controllers?.length && !cloud.controllers?.length) {
+                cloud.controllers = cached.controllers;
+                needsBackPush = true;
+            }
             saveLocal(cloud);
+            if (needsBackPush) {
+                // Fire-and-forget so we don't block first paint.
+                pushToWorker(cloud).catch(e => console.warn('migration back-push failed:', e));
+            }
             return { cfg: cloud, source: 'cloud' };
         } catch (e) {
             console.warn('Worker unreachable, using cached config:', e);
