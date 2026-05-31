@@ -1,6 +1,15 @@
 import { netro } from './netro.js';
 import { loadConfig, saveConfig, hasController, hasSensor, defaultConfig } from './config.js';
 
+// Netro returns timestamps as bare ISO strings without a timezone marker
+// (e.g. "2026-05-31T16:06:47"), but they're UTC. JavaScript parses bare
+// datetimes as LOCAL time — silently wrong by your offset. Always parse via this.
+function parseNetroTime(s) {
+    if (!s) return new Date(NaN);
+    const hasTz = s.endsWith('Z') || /[+-]\d{2}:?\d{2}$/.test(s);
+    return new Date(hasTz ? s : s + 'Z');
+}
+
 // ---------- State ----------
 let config = loadConfig();
 let runCtx = null;
@@ -412,8 +421,8 @@ function computeConflicts(schedulesByController, zoneFlowLpm, capacityLpm) {
     const events = [];
     for (const scheds of schedulesByController.values()) {
         for (const s of scheds) {
-            events.push({ t: new Date(s.start_time).getTime(), delta: +zoneFlowLpm });
-            events.push({ t: new Date(s.end_time).getTime(),   delta: -zoneFlowLpm });
+            events.push({ t: parseNetroTime(s.start_time).getTime(), delta: +zoneFlowLpm });
+            events.push({ t: parseNetroTime(s.end_time).getTime(),   delta: -zoneFlowLpm });
         }
     }
     events.sort((a, b) => a.t - b.t || a.delta - b.delta); // ends before starts at same instant
@@ -462,8 +471,8 @@ function renderDayCard(dayDate, schedulesByController, infoByController, conflic
     // Collect blocks per controller for this day.
     const lanes = config.controllers.map(c => {
         const scheds = (schedulesByController.get(c.serial) || []).filter(s => {
-            const st = new Date(s.start_time);
-            const en = new Date(s.end_time);
+            const st = parseNetroTime(s.start_time);
+            const en = parseNetroTime(s.end_time);
             return en > dayStart && st < dayEnd;
         });
         return { cfg: c, info: infoByController.get(c.serial), scheds };
@@ -502,13 +511,13 @@ function renderDayCard(dayDate, schedulesByController, infoByController, conflic
 
     const laneRows = lanes.map(({ cfg, info, scheds }) => {
         const blocks = scheds.map(s => {
-            const st = Math.max(new Date(s.start_time), dayStart);
-            const en = Math.min(new Date(s.end_time), dayEnd);
+            const st = Math.max(parseNetroTime(s.start_time), dayStart);
+            const en = Math.min(parseNetroTime(s.end_time), dayEnd);
             const leftPct = ((st - dayStart) / 86400000) * 100;
             const widthPct = Math.max(0.3, ((en - st) / 86400000) * 100);
             const zoneName = info?.zones?.find(z => z.ith === s.zone)?.name || `Zone ${s.zone}`;
             const past = en <= now ? 'past' : '';
-            const tooltip = `${zoneName} · ${formatTime(new Date(s.start_time))}–${formatTime(new Date(s.end_time))} · ${Math.round((new Date(s.end_time) - new Date(s.start_time)) / 60000)} min`;
+            const tooltip = `${zoneName} · ${formatTime(parseNetroTime(s.start_time))}–${formatTime(parseNetroTime(s.end_time))} · ${Math.round((parseNetroTime(s.end_time) - parseNetroTime(s.start_time)) / 60000)} min`;
             return `
                 <div class="water-block ${past}"
                      style="left:${leftPct}%; width:${widthPct}%; background:${colorFor(cfg.serial)}"
@@ -605,8 +614,8 @@ async function loadStatusBar() {
     const upcoming = [];
     for (const { cfg, info, scheds } of all) {
         for (const s of scheds) {
-            const st = new Date(s.start_time).getTime();
-            const en = new Date(s.end_time).getTime();
+            const st = parseNetroTime(s.start_time).getTime();
+            const en = parseNetroTime(s.end_time).getTime();
             const zoneName = info?.zones?.find(z => z.ith === s.zone)?.name || `Zone ${s.zone}`;
             if (st <= now && en > now) {
                 running.push({ cfg, zone: s.zone, zoneName, endMs: en });
@@ -773,7 +782,7 @@ function renderSensorCard(cfg, info, latest, errorMsg) {
 }
 
 function formatAgo(iso) {
-    const then = new Date(iso);
+    const then = parseNetroTime(iso);
     if (isNaN(then)) return iso;
     const diffMs = Date.now() - then.getTime();
     const sec = Math.floor(diffMs / 1000);
