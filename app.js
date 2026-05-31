@@ -1,5 +1,9 @@
 import { netro } from './netro.js';
-import { loadConfig, saveConfig, hasController, hasSensor, defaultConfig } from './config.js';
+import {
+    loadConfig, saveConfig, hasController, hasSensor, defaultConfig,
+    loadWorkerCreds, saveWorkerCreds, hasWorkerCreds,
+    fetchFromWorker, pushToWorker,
+} from './config.js';
 
 // Netro returns timestamps as bare ISO strings without a timezone marker
 // (e.g. "2026-05-31T16:06:47"), but they're UTC. JavaScript parses bare
@@ -11,8 +15,34 @@ function parseNetroTime(s) {
 }
 
 // ---------- State ----------
-let config = loadConfig();
+let config = defaultConfig(); // populated by initConfig() below
+let configSource = 'local';   // 'cloud' | 'cache' | 'local' — drives the sync indicator
 let runCtx = null;
+
+async function initConfig() {
+    const { cfg, source } = await loadConfig();
+    config = cfg;
+    configSource = source;
+    updateSyncBadge();
+}
+
+function updateSyncBadge() {
+    const badge = document.getElementById('sync-badge');
+    if (!badge) return;
+    if (configSource === 'cloud') {
+        badge.textContent = '☁ synced';
+        badge.title = 'Reading config from your Cloudflare Worker. Changes save to cloud and propagate to your other devices.';
+        badge.className = 'sync-badge ok';
+    } else if (configSource === 'cache') {
+        badge.textContent = '⚠ offline cache';
+        badge.title = 'Could not reach your Worker. Showing last-known config from this device.';
+        badge.className = 'sync-badge warn';
+    } else {
+        badge.textContent = '● local only';
+        badge.title = 'No Worker configured. This device\'s config is not shared with your other devices. Set one up in Automation.';
+        badge.className = 'sync-badge';
+    }
+}
 
 // ---------- Tabs ----------
 document.querySelectorAll('.tab').forEach(tab => {
@@ -30,19 +60,8 @@ function switchTab(name) {
 }
 
 // ---------- Automation (Cloudflare Worker) ----------
-const WORKER_STORE = 'netro-desktop-worker-v1';
 let workerCfg = null;                       // loaded from the Worker when connected
 let workerControllerInfos = new Map();      // serial -> netro device info (for zone dropdowns)
-
-function loadWorkerCreds() {
-    const raw = localStorage.getItem(WORKER_STORE);
-    if (!raw) return { url: '', token: '' };
-    try { return JSON.parse(raw); } catch { return { url: '', token: '' }; }
-}
-
-function saveWorkerCreds(creds) {
-    localStorage.setItem(WORKER_STORE, JSON.stringify(creds));
-}
 
 function initAutomationTab() {
     const creds = loadWorkerCreds();
@@ -81,6 +100,10 @@ async function connectWorker() {
         status.textContent = `Connected · Worker v${s.version}`;
         await refreshControllerInfos();
         renderWorkerPanel();
+
+        // Now that creds are saved, the dashboard config can come from the cloud too.
+        await initConfig();
+        loadDashboard();
     } catch (e) {
         status.textContent = '';
         toast('Connect failed: ' + e.message, 'error');
@@ -1038,14 +1061,24 @@ document.getElementById('save-config').addEventListener('click', async () => {
         catch (e) { failures.push(`${s.nickname || s.serial}: ${e.message}`); }
     }
 
-    saveConfig(config);
-    status.textContent = failures.length ? 'Saved with warnings' : 'Saved';
+    status.textContent = 'Saving…';
+    const result = await saveConfig(config);
+    if (result.cloud === 'ok') {
+        configSource = 'cloud';
+        status.textContent = failures.length ? 'Saved to cloud (with warnings)' : 'Saved to cloud';
+    } else if (result.cloud === 'failed') {
+        status.textContent = 'Saved locally — cloud failed';
+        toast('Cloud save failed: ' + result.error, 'error');
+    } else {
+        status.textContent = failures.length ? 'Saved with warnings' : 'Saved';
+    }
+    updateSyncBadge();
     if (failures.length) {
         toast('Saved, but some devices failed: ' + failures.join('; '), 'error');
-    } else {
+    } else if (result.cloud !== 'failed') {
         toast('Settings saved', 'success');
     }
-    setTimeout(() => status.textContent = '', 2500);
+    setTimeout(() => status.textContent = '', 3000);
     loadDashboard();
 });
 
@@ -1064,5 +1097,8 @@ function escapeHtml(s) {
 }
 
 // ---------- Init ----------
-if (!hasController(config)) switchTab('settings');
-loadDashboard();
+(async () => {
+    await initConfig();
+    if (!hasController(config)) switchTab('settings');
+    loadDashboard();
+})();

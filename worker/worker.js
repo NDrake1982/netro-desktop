@@ -98,6 +98,7 @@ function defaultConfig() {
         borehole_capacity_lpm: 20,
         default_zone_flow_lpm: null, // null → use borehole capacity as zone flow (conservative)
         controllers: [],             // [{ serial, nickname }]
+        sensors: [],                 // [{ serial, nickname }]
         patterns: [],                // see below for shape
         last_run: null,
     };
