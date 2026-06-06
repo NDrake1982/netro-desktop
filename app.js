@@ -834,7 +834,9 @@ async function loadSensorDetail(serial, days) {
             latest.celsius != null ? `${latest.celsius.toFixed(1)}°C` : '—')}
         ${chartCard('light-chart', 'Light',
             latest.sunlight != null ? (+latest.sunlight).toFixed(2) : '—')}
+        ${renderThresholdPanel(cfg)}
     `;
+    wireThresholdPanel(serial);
 
     sensorCharts.push(makeLineChart('moisture-chart', moistureSeries, {
         color: '#4cc2ff', yLabel: '%', yMin: 0, yMax: 100,
@@ -845,6 +847,88 @@ async function loadSensorDetail(serial, days) {
     sensorCharts.push(makeLineChart('light-chart', lightSeries, {
         color: '#f6e05e', yLabel: '',
     }));
+}
+
+function renderThresholdPanel(sensorCfg) {
+    const m = sensorThresholds(sensorCfg, 'moisture');
+    const b = sensorThresholds(sensorCfg, 'battery');
+    return `
+        <div class="chart-card threshold-panel">
+            <h3>Alert thresholds for this sensor</h3>
+            <p class="hint" style="margin-top:0;">
+                The Moisture and Battery squares on the dashboard tint <span class="src-warn">red</span> below the
+                warn threshold, <span style="color:var(--amber)">amber</span> between warn and good, and
+                <span class="src-ok">green</span> at good or above.
+            </p>
+            <div class="threshold-grid">
+                <div>
+                    <div class="threshold-metric">Moisture</div>
+                    <label class="field">
+                        <span>Warn below (%)</span>
+                        <input id="th-moisture-warn" type="number" min="0" max="100" step="1" value="${m.warn}">
+                    </label>
+                    <label class="field">
+                        <span>Good at or above (%)</span>
+                        <input id="th-moisture-good" type="number" min="0" max="100" step="1" value="${m.good}">
+                    </label>
+                </div>
+                <div>
+                    <div class="threshold-metric">Battery</div>
+                    <label class="field">
+                        <span>Warn below (%)</span>
+                        <input id="th-battery-warn" type="number" min="0" max="100" step="1" value="${b.warn}">
+                    </label>
+                    <label class="field">
+                        <span>Good at or above (%)</span>
+                        <input id="th-battery-good" type="number" min="0" max="100" step="1" value="${b.good}">
+                    </label>
+                </div>
+            </div>
+            <div class="threshold-actions">
+                <button class="btn-secondary" id="th-reset">Reset to defaults</button>
+                <button class="btn-primary" id="th-save">Save thresholds</button>
+            </div>
+        </div>`;
+}
+
+function wireThresholdPanel(serial) {
+    document.getElementById('th-save').addEventListener('click', async () => {
+        const mw = parseFloat(document.getElementById('th-moisture-warn').value);
+        const mg = parseFloat(document.getElementById('th-moisture-good').value);
+        const bw = parseFloat(document.getElementById('th-battery-warn').value);
+        const bg = parseFloat(document.getElementById('th-battery-good').value);
+        if ([mw, mg, bw, bg].some(v => isNaN(v))) {
+            toast('All four thresholds must be numbers', 'error');
+            return;
+        }
+        if (mg < mw || bg < bw) {
+            toast('"Good" threshold must be ≥ "warn" threshold', 'error');
+            return;
+        }
+        const s = config.sensors.find(s => s.serial === serial);
+        if (!s) return;
+        s.thresholds = {
+            moisture: { warn: mw, good: mg },
+            battery:  { warn: bw, good: bg },
+        };
+        const result = await saveConfig(config);
+        if (result.cloud === 'failed') {
+            toast('Saved locally; cloud save failed: ' + result.error, 'error');
+        } else {
+            toast('Thresholds saved', 'success');
+        }
+        loadDashboard(); // re-tint sensor cards
+    });
+
+    document.getElementById('th-reset').addEventListener('click', async () => {
+        const s = config.sensors.find(s => s.serial === serial);
+        if (!s) return;
+        delete s.thresholds;
+        await saveConfig(config);
+        loadSensorDetail(serial, currentSensorRangeDays); // re-render with defaults
+        loadDashboard();
+        toast('Reset to defaults', 'success');
+    });
 }
 
 function chartCard(canvasId, title, currentValue) {
@@ -1048,11 +1132,13 @@ function renderSensorCard(cfg, info, latest, errorMsg) {
     const statusText = isOffline ? 'offline' : status.toLowerCase() || 'online';
 
     const batteryPct = info.battery_level != null ? Math.round(info.battery_level * 100) : null;
-    const batteryCls = thresholdClass(batteryPct, { good: 50, warn: 20 });
+    const batteryThresholds = sensorThresholds(cfg, 'battery');
+    const batteryCls = thresholdClass(batteryPct, batteryThresholds);
     const batteryDisplay = batteryPct != null ? `${batteryPct}%` : '—';
 
     const moistureVal = latest?.moisture;
-    const moistureCls = thresholdClass(moistureVal, { good: 35, warn: 20 });
+    const moistureThresholds = sensorThresholds(cfg, 'moisture');
+    const moistureCls = thresholdClass(moistureVal, moistureThresholds);
     const moistureDisplay = moistureVal != null ? `${Math.round(moistureVal)}%` : '—';
 
     const temp = latest?.celsius != null
@@ -1104,6 +1190,22 @@ function thresholdClass(value, { good, warn }) {
     if (value >= good) return 'good';
     if (value >= warn) return 'warn';
     return 'bad';
+}
+
+// Resolve a sensor's threshold preferences for a given metric.
+// Reads from sensor config if set, otherwise returns sensible defaults.
+const DEFAULT_THRESHOLDS = {
+    moisture: { warn: 20, good: 35 },
+    battery:  { warn: 20, good: 50 },
+};
+
+function sensorThresholds(sensorCfg, metric) {
+    const fromCfg = sensorCfg?.thresholds?.[metric];
+    const def = DEFAULT_THRESHOLDS[metric];
+    return {
+        warn: fromCfg?.warn ?? def.warn,
+        good: fromCfg?.good ?? def.good,
+    };
 }
 
 function formatAgo(iso) {
