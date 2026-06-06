@@ -6,6 +6,8 @@
     <title>NetroDesktop</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%92%A7%3C/text%3E%3C/svg%3E">
     <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
 </head>
 <body>
     <header class="topbar">
@@ -106,6 +108,24 @@
                         <button class="btn-primary" id="save-worker-config">Save patterns</button>
                     </div>
                 </div>
+            </div>
+        </section>
+
+        <section id="sensor-detail" class="view">
+            <div class="detail-header">
+                <button id="sensor-detail-back" class="btn-secondary">← Back</button>
+                <div class="detail-title">
+                    <h2 id="sensor-detail-name">Sensor</h2>
+                    <div id="sensor-detail-meta" class="controller-serial"></div>
+                </div>
+                <div id="sensor-detail-range">
+                    <button class="range-btn active" data-days="1">24h</button>
+                    <button class="range-btn" data-days="7">7d</button>
+                    <button class="range-btn" data-days="30">30d</button>
+                </div>
+            </div>
+            <div id="sensor-detail-content">
+                <div class="loading">Loading…</div>
             </div>
         </section>
 

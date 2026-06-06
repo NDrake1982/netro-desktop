@@ -701,6 +701,179 @@ function isTomorrow(d) {
     return d.getDate() === t.getDate() && d.getMonth() === t.getMonth() && d.getFullYear() === t.getFullYear();
 }
 
+// ---------- Sensor detail view (click sensor card) ----------
+let currentSensorSerial = null;
+let currentSensorRangeDays = 1;
+let sensorCharts = []; // Chart.js instances we've spawned, so we can destroy on re-render
+
+function openSensorDetail(serial) {
+    currentSensorSerial = serial;
+    location.hash = `sensor=${serial}`;
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    document.getElementById('sensor-detail').classList.add('active');
+    loadSensorDetail(serial, currentSensorRangeDays);
+}
+
+function closeSensorDetail() {
+    destroyCharts();
+    if (location.hash.startsWith('#sensor=')) location.hash = '';
+    switchTab('dashboard');
+}
+
+function destroyCharts() {
+    sensorCharts.forEach(c => { try { c.destroy(); } catch {} });
+    sensorCharts = [];
+}
+
+async function loadSensorDetail(serial, days) {
+    const content = document.getElementById('sensor-detail-content');
+    content.innerHTML = `<div class="loading">Loading…</div>`;
+    destroyCharts();
+
+    const cfg = config.sensors.find(s => s.serial === serial) || { serial, nickname: '' };
+    document.getElementById('sensor-detail-name').textContent = cfg.nickname || serial;
+
+    const end = new Date();
+    const start = new Date(end);
+    start.setDate(end.getDate() - days);
+    const startStr = toIsoDate(start);
+    const endStr = toIsoDate(end);
+
+    let info, data;
+    try {
+        [info, data] = await Promise.all([
+            netro.sensorInfo(serial),
+            netro.sensorData(serial, { start_date: startStr, end_date: endStr }),
+        ]);
+    } catch (e) {
+        content.innerHTML = `<div class="placeholder">Failed to load: ${escapeHtml(e.message)}</div>`;
+        return;
+    }
+
+    document.getElementById('sensor-detail-name').textContent = cfg.nickname || info.name || serial;
+    const batteryPct = info.battery_level != null ? Math.round(info.battery_level * 100) : null;
+    const meta = [
+        serial,
+        info.status ? info.status.toLowerCase() : '',
+        batteryPct != null ? `battery ${batteryPct}%` : '',
+        info.last_active ? `last seen ${formatAgo(info.last_active)}` : '',
+    ].filter(Boolean).join(' · ');
+    document.getElementById('sensor-detail-meta').textContent = meta;
+
+    if (!data.length) {
+        content.innerHTML = `<div class="placeholder">No readings in the last ${days} day${days > 1 ? 's' : ''}.</div>`;
+        return;
+    }
+
+    // Sort ascending by time for charts.
+    const sorted = [...data].sort((a, b) =>
+        parseNetroTime(a.time).getTime() - parseNetroTime(b.time).getTime()
+    );
+    const latest = sorted[sorted.length - 1];
+
+    const moistureSeries = sorted.map(d => ({ x: parseNetroTime(d.time), y: d.moisture }));
+    const tempSeries = sorted
+        .map(d => {
+            const c = d.celsius != null ? d.celsius
+                : (d.fahrenheit != null ? ((d.fahrenheit - 32) * 5 / 9) : null);
+            return { x: parseNetroTime(d.time), y: c };
+        })
+        .filter(p => p.y != null);
+    const lightSeries = sorted
+        .filter(d => d.sunlight != null)
+        .map(d => ({ x: parseNetroTime(d.time), y: +d.sunlight }));
+
+    content.innerHTML = `
+        ${chartCard('moisture-chart', 'Moisture',
+            latest.moisture != null ? `${Math.round(latest.moisture)}%` : '—')}
+        ${chartCard('temp-chart', 'Temperature',
+            latest.celsius != null ? `${latest.celsius.toFixed(1)}°C` : '—')}
+        ${chartCard('light-chart', 'Light',
+            latest.sunlight != null ? (+latest.sunlight).toFixed(2) : '—')}
+    `;
+
+    sensorCharts.push(makeLineChart('moisture-chart', moistureSeries, {
+        color: '#4cc2ff', yLabel: '%', yMin: 0, yMax: 100,
+    }));
+    sensorCharts.push(makeLineChart('temp-chart', tempSeries, {
+        color: '#f6ad55', yLabel: '°C',
+    }));
+    sensorCharts.push(makeLineChart('light-chart', lightSeries, {
+        color: '#f6e05e', yLabel: '',
+    }));
+}
+
+function chartCard(canvasId, title, currentValue) {
+    return `
+        <div class="chart-card">
+            <h3>${title}</h3>
+            <div class="chart-current">${escapeHtml(currentValue)}</div>
+            <div class="chart-wrap"><canvas id="${canvasId}"></canvas></div>
+        </div>`;
+}
+
+function makeLineChart(canvasId, points, { color, yLabel, yMin, yMax }) {
+    const ctx = document.getElementById(canvasId);
+    if (!ctx) return null;
+    const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    const textDim = cssVar('--text-dim') || '#8b98a5';
+    const border = cssVar('--border') || '#2a3441';
+    return new Chart(ctx, {
+        type: 'line',
+        data: {
+            datasets: [{
+                data: points,
+                borderColor: color,
+                backgroundColor: color + '22',
+                fill: true,
+                tension: 0.25,
+                pointRadius: 2,
+                pointHoverRadius: 4,
+                borderWidth: 2,
+            }],
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: { legend: { display: false } },
+            scales: {
+                x: {
+                    type: 'time',
+                    time: { tooltipFormat: 'PPpp' },
+                    grid: { color: border, drawBorder: false },
+                    ticks: { color: textDim, maxRotation: 0, autoSkip: true, maxTicksLimit: 8 },
+                },
+                y: {
+                    title: yLabel ? { display: true, text: yLabel, color: textDim } : { display: false },
+                    grid: { color: border, drawBorder: false },
+                    ticks: { color: textDim },
+                    min: yMin,
+                    max: yMax,
+                },
+            },
+        },
+    });
+}
+
+document.getElementById('sensor-detail-back').addEventListener('click', closeSensorDetail);
+
+document.querySelectorAll('#sensor-detail-range .range-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        document.querySelectorAll('#sensor-detail-range .range-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentSensorRangeDays = +btn.dataset.days;
+        if (currentSensorSerial) loadSensorDetail(currentSensorSerial, currentSensorRangeDays);
+    });
+});
+
+// Deep link via URL hash: #sensor=SERIAL opens that sensor's detail on load.
+window.addEventListener('hashchange', () => {
+    const m = location.hash.match(/^#sensor=([0-9a-f]+)$/i);
+    if (m) openSensorDetail(m[1]);
+});
+
 // ---------- Status bar auto-refresh ----------
 // Runs every 60s; skips when not on the Dashboard tab, when the browser tab is hidden,
 // or when there are no controllers yet. Also refreshes immediately on tab-becomes-visible.
@@ -770,7 +943,7 @@ async function loadSensors() {
                 netro.sensorInfo(s.serial),
                 netro.sensorData(s.serial).catch(() => []),
             ]);
-            const latest = dataArr.length ? dataArr[dataArr.length - 1] : null;
+            const latest = pickLatestReading(dataArr);
             return renderSensorCard(s, info, latest, null);
         } catch (e) {
             return renderSensorCard(s, null, null, e.message);
@@ -778,6 +951,19 @@ async function loadSensors() {
     }));
 
     grid.innerHTML = cards.join('');
+    document.querySelectorAll('.sensor-card[data-sensor-serial]').forEach(card => {
+        card.addEventListener('click', () => openSensorDetail(card.dataset.sensorSerial));
+    });
+}
+
+// Netro returns sensor_data sorted newest-first, but be defensive — sort by time
+// descending and take the head so we don't depend on response order.
+function pickLatestReading(dataArr) {
+    if (!Array.isArray(dataArr) || dataArr.length === 0) return null;
+    const sorted = [...dataArr].sort((a, b) =>
+        parseNetroTime(b.time).getTime() - parseNetroTime(a.time).getTime()
+    );
+    return sorted[0];
 }
 
 function renderSensorCard(cfg, info, latest, errorMsg) {
@@ -785,7 +971,7 @@ function renderSensorCard(cfg, info, latest, errorMsg) {
 
     if (errorMsg) {
         return `
-            <div class="sensor-card">
+            <div class="sensor-card" data-sensor-serial="${escapeHtml(cfg.serial)}">
                 <div class="sensor-card-header">
                     <div>
                         <h3 class="sensor-name">${escapeHtml(name)}</h3>
@@ -806,16 +992,16 @@ function renderSensorCard(cfg, info, latest, errorMsg) {
     const batteryClass = batteryPct == null ? '' : (batteryPct < 20 ? 'bad' : (batteryPct < 40 ? 'warn' : ''));
     const batteryDisplay = batteryPct != null ? `${batteryPct}%` : '—';
 
-    // Latest reading: moisture (%) and temperature (°C). Light if present.
     const moisture = latest?.moisture != null ? `${Math.round(latest.moisture)}%` : '—';
     const temp = latest?.celsius != null
         ? `${latest.celsius.toFixed(1)}°C`
         : (latest?.fahrenheit != null ? `${(((latest.fahrenheit - 32) * 5) / 9).toFixed(1)}°C` : '—');
+    const light = latest?.sunlight != null ? `${(+latest.sunlight).toFixed(2)}` : '—';
 
     const lastSeen = info.last_active ? formatAgo(info.last_active) : 'never';
 
     return `
-        <div class="sensor-card">
+        <div class="sensor-card" data-sensor-serial="${escapeHtml(cfg.serial)}">
             <div class="sensor-card-header">
                 <div>
                     <h3 class="sensor-name">${escapeHtml(name)}</h3>
@@ -833,6 +1019,10 @@ function renderSensorCard(cfg, info, latest, errorMsg) {
                     <div class="metric-value">${temp}</div>
                 </div>
                 <div class="metric">
+                    <div class="metric-label">Light</div>
+                    <div class="metric-value">${light}</div>
+                </div>
+                <div class="metric">
                     <div class="metric-label">Battery</div>
                     <div class="metric-value ${batteryClass}">${batteryDisplay}</div>
                 </div>
@@ -841,6 +1031,7 @@ function renderSensorCard(cfg, info, latest, errorMsg) {
                     <div class="metric-value" style="font-size:13px;">${lastSeen}</div>
                 </div>
             </div>
+            <div class="open-hint">click for history →</div>
         </div>`;
 }
 
@@ -1178,6 +1369,15 @@ function escapeHtml(s) {
 // ---------- Init ----------
 (async () => {
     await initConfig();
-    if (!hasController(config)) switchTab('settings');
-    loadDashboard();
+    // Honour a sensor deep link if the user opened the URL with #sensor=…
+    const m = location.hash.match(/^#sensor=([0-9a-f]+)$/i);
+    if (m && hasController(config)) {
+        loadDashboard();
+        openSensorDetail(m[1]);
+    } else if (!hasController(config)) {
+        switchTab('settings');
+        loadDashboard();
+    } else {
+        loadDashboard();
+    }
 })();
