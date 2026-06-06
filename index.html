@@ -131,14 +131,18 @@
 
         <section id="settings" class="view">
             <div class="settings-panel">
-                <h2>Borehole</h2>
+                <h2>Water sources</h2>
                 <label class="field">
-                    <span>Borehole sustainable output (L/min) — used for conflict detection on the Timeline</span>
+                    <span>Borehole sustainable output (L/min)</span>
                     <input id="borehole-lpm" type="number" min="0" step="0.5" placeholder="e.g. 20">
                 </label>
                 <label class="field">
-                    <span>Average zone flow rate (L/min) — flow assumed for each running zone. Leave blank to default to the borehole capacity (the conservative "any overlap = conflict" model).</span>
-                    <input id="default-zone-flow" type="number" min="0" step="0.5" placeholder="defaults to borehole capacity">
+                    <span>Mains / house supply capacity (L/min) — leave blank if you don't want conflicts flagged on mains-fed controllers</span>
+                    <input id="mains-lpm" type="number" min="0" step="0.5" placeholder="leave blank to disable">
+                </label>
+                <label class="field">
+                    <span>Average zone flow rate (L/min) — flow assumed per running zone. Defaults to the source's capacity (conservative "any overlap = conflict").</span>
+                    <input id="default-zone-flow" type="number" min="0" step="0.5" placeholder="defaults to source capacity">
                 </label>
 
                 <h2>Controllers</h2>

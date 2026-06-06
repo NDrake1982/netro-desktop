@@ -11,6 +11,7 @@ export function defaultConfig() {
         controllers: [],
         sensors: [],
         borehole_capacity_lpm: null,
+        mains_capacity_lpm: null,
         default_zone_flow_lpm: null,
     };
 }
@@ -19,6 +20,8 @@ function normalize(cfg) {
     cfg = cfg || {};
     if (!Array.isArray(cfg.controllers)) cfg.controllers = [];
     if (!Array.isArray(cfg.sensors)) cfg.sensors = [];
+    // Backwards compat: any controller without a water_source is assumed to be on the borehole.
+    cfg.controllers = cfg.controllers.map(c => ({ water_source: 'borehole', ...c }));
     return { ...defaultConfig(), ...cfg };
 }
 

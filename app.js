@@ -413,19 +413,35 @@ async function loadTimeline() {
         </span>
     `).join('');
 
-    // Compute conflicts across all controllers (sweep line).
-    const capacity = config.borehole_capacity_lpm;
-    const zoneFlow = config.default_zone_flow_lpm || capacity; // default to capacity → any overlap is a conflict
-    const conflicts = capacity ? computeConflicts(schedulesByController, zoneFlow, capacity) : [];
+    // Per-source conflict detection. Only zones from controllers tied to each source
+    // count against that source's capacity.
+    const conflictsBySource = {};
+    const summaryParts = [];
+    for (const source of ['borehole', 'mains']) {
+        const capacity = source === 'borehole' ? config.borehole_capacity_lpm : config.mains_capacity_lpm;
+        if (!capacity) continue;
+        const sourceSerials = new Set(config.controllers.filter(c => (c.water_source || 'borehole') === source).map(c => c.serial));
+        if (!sourceSerials.size) continue;
+        const subset = new Map();
+        for (const [serial, scheds] of schedulesByController) {
+            if (sourceSerials.has(serial)) subset.set(serial, scheds);
+        }
+        const zoneFlow = config.default_zone_flow_lpm || capacity;
+        const cs = computeConflicts(subset, zoneFlow, capacity);
+        conflictsBySource[source] = cs;
+        if (cs.length === 0) {
+            summaryParts.push(`<span class="src-ok">✓ ${capitalize(source)}: no conflicts (${capacity} L/min)</span>`);
+        } else {
+            summaryParts.push(`<span class="src-warn">⚠ ${capitalize(source)}: ${cs.length} conflict${cs.length > 1 ? 's' : ''} (${capacity} L/min)</span>`);
+        }
+    }
 
-    // Summary banner
-    let summaryHtml = '';
-    if (!capacity) {
-        summaryHtml = `<div class="timeline-summary">Set a borehole capacity in Settings to enable conflict detection.</div>`;
-    } else if (conflicts.length === 0) {
-        summaryHtml = `<div class="timeline-summary ok">✓ No borehole capacity conflicts in the next 7 days (capacity ${capacity} L/min, zone flow ${zoneFlow} L/min)</div>`;
+    let summaryHtml;
+    if (!summaryParts.length) {
+        summaryHtml = `<div class="timeline-summary">Set a borehole or mains capacity in Settings to enable conflict detection.</div>`;
     } else {
-        summaryHtml = `<div class="timeline-summary warn">⚠ ${conflicts.length} conflict${conflicts.length > 1 ? 's' : ''} where simultaneous flow exceeds the ${capacity} L/min borehole capacity. Each conflict is shown in red on the timeline below.</div>`;
+        const anyWarn = Object.values(conflictsBySource).some(cs => cs.length > 0);
+        summaryHtml = `<div class="timeline-summary ${anyWarn ? 'warn' : 'ok'}">${summaryParts.join(' &nbsp;·&nbsp; ')}</div>`;
     }
 
     // Build days
@@ -436,9 +452,26 @@ async function loadTimeline() {
         days.push(d);
     }
 
-    container.innerHTML = summaryHtml + days.map(d => renderDayCard(d, schedulesByController, infoByController, conflicts)).join('');
+    container.innerHTML = summaryHtml + days.map(d => renderDayCard(d, schedulesByController, infoByController, conflictsBySource)).join('');
+    wireTimelineSourceSelects();
 
     if (errors.length) toast('Some schedules failed: ' + errors.join('; '), 'error');
+}
+
+function capitalize(s) { return s ? s[0].toUpperCase() + s.slice(1) : s; }
+
+function wireTimelineSourceSelects() {
+    document.querySelectorAll('.lane-source-select').forEach(sel => {
+        sel.addEventListener('change', async () => {
+            const serial = sel.dataset.serial;
+            const ctrl = config.controllers.find(c => c.serial === serial);
+            if (!ctrl) return;
+            ctrl.water_source = sel.value;
+            await saveConfig(config);
+            toast(`${ctrl.nickname || serial} → ${sel.value}`, 'success');
+            loadTimeline();
+        });
+    });
 }
 
 function computeConflicts(schedulesByController, zoneFlowLpm, capacityLpm) {
@@ -475,7 +508,7 @@ function computeConflicts(schedulesByController, zoneFlowLpm, capacityLpm) {
     return conflicts;
 }
 
-function renderDayCard(dayDate, schedulesByController, infoByController, conflicts = []) {
+function renderDayCard(dayDate, schedulesByController, infoByController, conflictsBySource = {}) {
     const dayStart = new Date(dayDate);
     dayStart.setHours(0, 0, 0, 0);
     const dayEnd = new Date(dayStart);
@@ -493,7 +526,6 @@ function renderDayCard(dayDate, schedulesByController, infoByController, conflic
 
     const dateStr = dayDate.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
 
-    // Collect blocks per controller for this day.
     const lanes = config.controllers.map(c => {
         const scheds = (schedulesByController.get(c.serial) || []).filter(s => {
             const st = parseNetroTime(s.start_time);
@@ -505,29 +537,31 @@ function renderDayCard(dayDate, schedulesByController, infoByController, conflic
 
     const totalScheds = lanes.reduce((n, l) => n + l.scheds.length, 0);
 
-    // Conflict bands that overlap this day, clipped to the day.
-    const dayConflicts = conflicts
-        .filter(c => c.end > dayStart && c.start < dayEnd)
-        .map(c => ({
-            start: c.start < dayStart ? dayStart : c.start,
-            end:   c.end > dayEnd ? dayEnd : c.end,
-            peak:  c.peak,
-        }));
+    // Pre-compute conflict bands per source, clipped to this day.
+    const bandsBySource = {};
+    let dayConflictCount = 0;
+    for (const [source, conflicts] of Object.entries(conflictsBySource)) {
+        const dayConflicts = conflicts
+            .filter(c => c.end > dayStart && c.start < dayEnd)
+            .map(c => ({
+                start: c.start < dayStart ? dayStart : c.start,
+                end:   c.end > dayEnd ? dayEnd : c.end,
+                peak:  c.peak,
+            }));
+        dayConflictCount += dayConflicts.length;
+        bandsBySource[source] = dayConflicts.map(c => {
+            const leftPct = ((c.start - dayStart) / 86400000) * 100;
+            const widthPct = Math.max(0.3, ((c.end - c.start) / 86400000) * 100);
+            const tip = `${capitalize(source)} conflict ${formatTime(c.start)}–${formatTime(c.end)} · peak ${c.peak.toFixed(1)} L/min`;
+            return `<div class="conflict-band" style="left:${leftPct}%; width:${widthPct}%" title="${escapeHtml(tip)}"></div>`;
+        }).join('');
+    }
 
-    const conflictBands = dayConflicts.map(c => {
-        const leftPct = ((c.start - dayStart) / 86400000) * 100;
-        const widthPct = Math.max(0.3, ((c.end - c.start) / 86400000) * 100);
-        const tip = `Conflict ${formatTime(c.start)}–${formatTime(c.end)} · peak ${c.peak.toFixed(1)} L/min`;
-        return `<div class="conflict-band" style="left:${leftPct}%; width:${widthPct}%" title="${escapeHtml(tip)}"></div>`;
-    }).join('');
-
-    // Hour ruler (00, 06, 12, 18, 24)
     const hourTicks = [0, 6, 12, 18, 24].map(h => `
         <span class="hour-tick" style="left:${(h / 24) * 100}%"></span>
         <span class="hour-label" style="left:${(h / 24) * 100}%">${String(h).padStart(2, '0')}</span>
     `).join('');
 
-    // "Now" line only for today
     let nowMarker = '';
     if (isToday) {
         const pct = ((now - dayStart) / 86400000) * 100;
@@ -535,6 +569,9 @@ function renderDayCard(dayDate, schedulesByController, infoByController, conflic
     }
 
     const laneRows = lanes.map(({ cfg, info, scheds }) => {
+        const source = cfg.water_source || 'borehole';
+        // Only show this source's conflict bands inside this lane (mains conflict in a borehole row is meaningless).
+        const conflictBands = bandsBySource[source] || '';
         const blocks = scheds.map(s => {
             const st = Math.max(parseNetroTime(s.start_time), dayStart);
             const en = Math.min(parseNetroTime(s.end_time), dayEnd);
@@ -550,13 +587,19 @@ function renderDayCard(dayDate, schedulesByController, infoByController, conflic
         }).join('');
         return `
             <div class="controller-lane">
-                <div class="lane-label">${escapeHtml(cfg.nickname || cfg.serial)}</div>
+                <div class="lane-label">
+                    <span class="lane-nick">${escapeHtml(cfg.nickname || cfg.serial)}</span>
+                    <select class="lane-source-select" data-serial="${escapeHtml(cfg.serial)}" title="Water source for this controller">
+                        <option value="borehole" ${source === 'borehole' ? 'selected' : ''}>Borehole</option>
+                        <option value="mains" ${source === 'mains' ? 'selected' : ''}>Mains</option>
+                    </select>
+                </div>
                 <div class="lane-track">${conflictBands}${nowMarker}${blocks}</div>
             </div>`;
     }).join('');
 
-    const conflictSummary = dayConflicts.length
-        ? `<div class="day-conflicts">⚠ ${dayConflicts.length} conflict${dayConflicts.length > 1 ? 's' : ''} today</div>`
+    const conflictSummary = dayConflictCount
+        ? `<div class="day-conflicts">⚠ ${dayConflictCount} conflict${dayConflictCount > 1 ? 's' : ''} today</div>`
         : '';
 
     return `
@@ -1193,6 +1236,7 @@ document.addEventListener('keydown', (e) => {
 // ---------- Settings ----------
 function renderSettings() {
     document.getElementById('borehole-lpm').value = config.borehole_capacity_lpm ?? '';
+    document.getElementById('mains-lpm').value = config.mains_capacity_lpm ?? '';
     document.getElementById('default-zone-flow').value = config.default_zone_flow_lpm ?? '';
 
     renderEditList(
@@ -1226,7 +1270,16 @@ function renderEditList(elementId, items, kind, nicknamePlaceholder, onRemove) {
         list.innerHTML = `<p class="hint">No ${kind}s added yet. Click + Add ${kind} below.</p>`;
         return;
     }
-    list.innerHTML = items.map((c, i) => `
+    list.innerHTML = items.map((c, i) => {
+        const sourceSelect = kind === 'controller' ? `
+            <label class="field">
+                <span>Water source</span>
+                <select class="ec-source-controller">
+                    <option value="borehole" ${(c.water_source || 'borehole') === 'borehole' ? 'selected' : ''}>Borehole</option>
+                    <option value="mains" ${c.water_source === 'mains' ? 'selected' : ''}>Mains</option>
+                </select>
+            </label>` : '';
+        return `
         <div class="controller-edit-row" data-i="${i}">
             <div class="row-head">
                 <label class="field">
@@ -1237,10 +1290,11 @@ function renderEditList(elementId, items, kind, nicknamePlaceholder, onRemove) {
                     <span>Serial number</span>
                     <input class="ec-serial-${kind}" type="text" value="${escapeHtml(c.serial || '')}" placeholder="12-char hex">
                 </label>
+                ${sourceSelect}
                 <button class="btn-danger" data-remove="${i}">Remove</button>
             </div>
-        </div>
-    `).join('');
+        </div>`;
+    }).join('');
 
     list.querySelectorAll('[data-remove]').forEach(b => {
         b.addEventListener('click', () => onRemove(+b.dataset.remove));
@@ -1250,10 +1304,12 @@ function renderEditList(elementId, items, kind, nicknamePlaceholder, onRemove) {
 function captureSettingsToConfig() {
     const cNicks = [...document.querySelectorAll('.ec-nick-controller')];
     const cSerials = [...document.querySelectorAll('.ec-serial-controller')];
+    const cSources = [...document.querySelectorAll('.ec-source-controller')];
     config.controllers = cNicks.map((n, i) => ({
         serial: cSerials[i].value.trim().toLowerCase(),
         nickname: n.value.trim() || 'Controller',
         zone_flow_lpm: config.controllers[i]?.zone_flow_lpm ?? {},
+        water_source: cSources[i]?.value || 'borehole',
     }));
 
     const sNicks = [...document.querySelectorAll('.ec-nick-sensor')];
@@ -1265,6 +1321,8 @@ function captureSettingsToConfig() {
 
     const bh = document.getElementById('borehole-lpm').value;
     config.borehole_capacity_lpm = bh ? parseFloat(bh) : null;
+    const mn = document.getElementById('mains-lpm').value;
+    config.mains_capacity_lpm = mn ? parseFloat(mn) : null;
     const dz = document.getElementById('default-zone-flow').value;
     config.default_zone_flow_lpm = dz ? parseFloat(dz) : null;
 }
