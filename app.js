@@ -874,30 +874,46 @@ window.addEventListener('hashchange', () => {
     if (m) openSensorDetail(m[1]);
 });
 
-// ---------- Status bar auto-refresh ----------
-// Runs every 60s; skips when not on the Dashboard tab, when the browser tab is hidden,
-// or when there are no controllers yet. Also refreshes immediately on tab-becomes-visible.
+// ---------- Auto-refresh timers ----------
+// Both run only when the Dashboard tab is active AND the browser tab is visible.
+// Status bar: every 60s (running/next is time-sensitive).
+// Sensors: every 15min (sensors only upload ~hourly anyway).
+// Both also refresh instantly when the browser tab becomes visible after being hidden.
 let statusBarTimer = null;
+let sensorsTimer = null;
 const STATUS_REFRESH_MS = 60_000;
+const SENSORS_REFRESH_MS = 15 * 60_000;
 
-function shouldRefreshStatusBar() {
+function isDashboardActiveAndVisible() {
     return document.visibilityState === 'visible'
-        && document.getElementById('dashboard').classList.contains('active')
-        && hasController(config);
+        && document.getElementById('dashboard').classList.contains('active');
 }
 
-function startStatusBarAutoRefresh() {
+function shouldRefreshStatusBar() {
+    return isDashboardActiveAndVisible() && hasController(config);
+}
+
+function shouldRefreshSensors() {
+    return isDashboardActiveAndVisible() && hasSensor(config);
+}
+
+function startAutoRefreshTimers() {
     if (statusBarTimer) clearInterval(statusBarTimer);
+    if (sensorsTimer) clearInterval(sensorsTimer);
     statusBarTimer = setInterval(() => {
         if (shouldRefreshStatusBar()) loadStatusBar().catch(() => {});
     }, STATUS_REFRESH_MS);
+    sensorsTimer = setInterval(() => {
+        if (shouldRefreshSensors()) loadSensors().catch(() => {});
+    }, SENSORS_REFRESH_MS);
 }
 
 document.addEventListener('visibilitychange', () => {
     if (shouldRefreshStatusBar()) loadStatusBar().catch(() => {});
+    if (shouldRefreshSensors()) loadSensors().catch(() => {});
 });
 
-startStatusBarAutoRefresh();
+startAutoRefreshTimers();
 
 async function loadControllers() {
     const container = document.getElementById('controllers');
