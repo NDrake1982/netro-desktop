@@ -390,8 +390,8 @@ main {
     position: relative;
     display: flex;
     align-items: center;
-    height: 26px;
-    margin-bottom: 4px;
+    min-height: 50px;
+    margin-bottom: 8px;
 }
 
 .lane-label {
@@ -402,8 +402,9 @@ main {
     padding-right: 10px;
     display: flex;
     flex-direction: column;
-    gap: 3px;
+    gap: 6px;
     align-items: flex-start;
+    justify-content: center;
     min-width: 0;
 }
 
