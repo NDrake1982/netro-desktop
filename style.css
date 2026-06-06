@@ -685,6 +685,20 @@ main {
 
 .metric-value.warn { color: var(--amber); }
 .metric-value.bad { color: var(--red); }
+.metric-value.good { color: var(--green); }
+
+.metric.good {
+    background: rgba(63,185,80,0.10);
+    border: 1px solid rgba(63,185,80,0.30);
+}
+.metric.warn {
+    background: rgba(210,153,34,0.10);
+    border: 1px solid rgba(210,153,34,0.30);
+}
+.metric.bad {
+    background: rgba(248,81,73,0.10);
+    border: 1px solid rgba(248,81,73,0.30);
+}
 
 .sensor-footer {
     font-size: 11px;

@@ -1048,10 +1048,13 @@ function renderSensorCard(cfg, info, latest, errorMsg) {
     const statusText = isOffline ? 'offline' : status.toLowerCase() || 'online';
 
     const batteryPct = info.battery_level != null ? Math.round(info.battery_level * 100) : null;
-    const batteryClass = batteryPct == null ? '' : (batteryPct < 20 ? 'bad' : (batteryPct < 40 ? 'warn' : ''));
+    const batteryCls = thresholdClass(batteryPct, { good: 50, warn: 20 });
     const batteryDisplay = batteryPct != null ? `${batteryPct}%` : '—';
 
-    const moisture = latest?.moisture != null ? `${Math.round(latest.moisture)}%` : '—';
+    const moistureVal = latest?.moisture;
+    const moistureCls = thresholdClass(moistureVal, { good: 35, warn: 20 });
+    const moistureDisplay = moistureVal != null ? `${Math.round(moistureVal)}%` : '—';
+
     const temp = latest?.celsius != null
         ? `${latest.celsius.toFixed(1)}°C`
         : (latest?.fahrenheit != null ? `${(((latest.fahrenheit - 32) * 5) / 9).toFixed(1)}°C` : '—');
@@ -1069,9 +1072,9 @@ function renderSensorCard(cfg, info, latest, errorMsg) {
                 <span class="status-pill ${statusClass}">${statusText}</span>
             </div>
             <div class="sensor-metrics">
-                <div class="metric">
+                <div class="metric ${moistureCls}">
                     <div class="metric-label">Moisture</div>
-                    <div class="metric-value">${moisture}</div>
+                    <div class="metric-value ${moistureCls}">${moistureDisplay}</div>
                 </div>
                 <div class="metric">
                     <div class="metric-label">Temperature</div>
@@ -1081,9 +1084,9 @@ function renderSensorCard(cfg, info, latest, errorMsg) {
                     <div class="metric-label">Light</div>
                     <div class="metric-value">${light}</div>
                 </div>
-                <div class="metric">
+                <div class="metric ${batteryCls}">
                     <div class="metric-label">Battery</div>
-                    <div class="metric-value ${batteryClass}">${batteryDisplay}</div>
+                    <div class="metric-value ${batteryCls}">${batteryDisplay}</div>
                 </div>
                 <div class="metric">
                     <div class="metric-label">Last seen</div>
@@ -1092,6 +1095,15 @@ function renderSensorCard(cfg, info, latest, errorMsg) {
             </div>
             <div class="open-hint">click for history →</div>
         </div>`;
+}
+
+// Returns 'good' | 'warn' | 'bad' | '' for a numeric value against ascending thresholds.
+// e.g. thresholdClass(25, { good: 35, warn: 20 }) → 'warn' (25 is between 20 and 35).
+function thresholdClass(value, { good, warn }) {
+    if (value == null || isNaN(value)) return '';
+    if (value >= good) return 'good';
+    if (value >= warn) return 'warn';
+    return 'bad';
 }
 
 function formatAgo(iso) {
