@@ -1493,6 +1493,8 @@ function captureSettingsToConfig() {
     config.mains_capacity_lpm = mn ? parseFloat(mn) : null;
     const dz = document.getElementById('default-zone-flow').value;
     config.default_zone_flow_lpm = dz ? parseFloat(dz) : null;
+    const mc = document.getElementById('mains-cost').value;
+    config.mains_water_cost_per_m3 = mc ? parseFloat(mc) : 5;
 }
 
 document.getElementById('add-controller').addEventListener('click', () => {
