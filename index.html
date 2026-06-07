@@ -26,6 +26,18 @@
     </header>
 
     <main>
+        <div id="status-bar" class="status-bar" hidden>
+            <div class="status-cell">
+                <span class="status-label">Now</span>
+                <span id="status-now" class="status-value">—</span>
+            </div>
+            <div class="status-divider">→</div>
+            <div class="status-cell">
+                <span class="status-label">Next</span>
+                <span id="status-next" class="status-value">—</span>
+            </div>
+        </div>
+
         <section id="dashboard" class="view active">
             <div id="savings-bar" class="savings-bar" hidden>
                 <span class="savings-icon">💰</span>
@@ -35,18 +47,6 @@
                         <span class="savings-amount" id="savings-amount">—</span>
                         <span class="savings-detail">vs mains @ £<span id="savings-rate">5</span>/m³ · <span id="savings-litres">—</span></span>
                     </div>
-                </div>
-            </div>
-
-            <div id="status-bar" class="status-bar" hidden>
-                <div class="status-cell">
-                    <span class="status-label">Now</span>
-                    <span id="status-now" class="status-value">—</span>
-                </div>
-                <div class="status-divider">→</div>
-                <div class="status-cell">
-                    <span class="status-label">Next</span>
-                    <span id="status-next" class="status-value">—</span>
                 </div>
             </div>
 

@@ -56,6 +56,14 @@ document.querySelectorAll('.tab').forEach(tab => {
 function switchTab(name) {
     document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
     document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === name));
+    // Status bar appears on Dashboard + Timeline (both are operational views).
+    const showStatus = (name === 'dashboard' || name === 'timeline') && hasController(config);
+    const bar = document.getElementById('status-bar');
+    if (showStatus) {
+        if (bar.hidden) loadStatusBar(); // refresh on entry if it was hidden
+    } else {
+        bar.hidden = true;
+    }
     if (name === 'settings') renderSettings();
     if (name === 'timeline') loadTimeline();
     if (name === 'automation') initAutomationTab();
