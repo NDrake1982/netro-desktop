@@ -13,6 +13,7 @@ export function defaultConfig() {
         borehole_capacity_lpm: null,
         mains_capacity_lpm: null,
         default_zone_flow_lpm: null,
+        mains_water_cost_per_m3: 5,
     };
 }
 

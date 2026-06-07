@@ -27,6 +27,17 @@
 
     <main>
         <section id="dashboard" class="view active">
+            <div id="savings-bar" class="savings-bar" hidden>
+                <span class="savings-icon">💰</span>
+                <div class="savings-text">
+                    <div class="savings-label">Saved on water bill (last 7 days)</div>
+                    <div>
+                        <span class="savings-amount" id="savings-amount">—</span>
+                        <span class="savings-detail">vs mains @ £<span id="savings-rate">5</span>/m³ · <span id="savings-litres">—</span></span>
+                    </div>
+                </div>
+            </div>
+
             <div id="status-bar" class="status-bar" hidden>
                 <div class="status-cell">
                     <span class="status-label">Now</span>
@@ -143,6 +154,10 @@
                 <label class="field">
                     <span>Average zone flow rate (L/min) — flow assumed per running zone. Defaults to the source's capacity (conservative "any overlap = conflict").</span>
                     <input id="default-zone-flow" type="number" min="0" step="0.5" placeholder="defaults to source capacity">
+                </label>
+                <label class="field">
+                    <span>Mains water cost (£/m³) — used by the savings counter on the Dashboard. UK average is ~£2-3 for water + £2-3 for wastewater, so £5 is typical combined.</span>
+                    <input id="mains-cost" type="number" min="0" step="0.01" placeholder="5">
                 </label>
 
                 <h2>Controllers</h2>

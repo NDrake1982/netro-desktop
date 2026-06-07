@@ -638,12 +638,65 @@ async function loadDashboard() {
     const refresh = document.getElementById('refresh-btn');
     refresh.classList.add('spinning');
     try {
-        await Promise.all([loadControllers(), loadSensors(), loadStatusBar()]);
+        await Promise.all([loadControllers(), loadSensors(), loadStatusBar(), loadSavings()]);
     } catch (e) {
         toast('Failed to load: ' + e.message, 'error');
     } finally {
         refresh.classList.remove('spinning');
     }
+}
+
+// Cost per cubic metre of mains water — used to estimate borehole savings.
+
+// Sum the volume drawn by EXECUTED borehole waterings in the last 7 days and
+// monetise it at the mains rate — that's the bill avoided.
+async function loadSavings() {
+    const bar = document.getElementById('savings-bar');
+    const boreholeSerials = config.controllers
+        .filter(c => (c.water_source || 'borehole') === 'borehole')
+        .map(c => c.serial);
+
+    if (!boreholeSerials.length) {
+        bar.hidden = true;
+        return;
+    }
+
+    const today = new Date();
+    const weekAgo = new Date(today);
+    weekAgo.setDate(today.getDate() - 7);
+    const startStr = toIsoDate(weekAgo);
+    const endStr = toIsoDate(today);
+
+    const flow = config.default_zone_flow_lpm || config.borehole_capacity_lpm;
+    if (!flow) {
+        // Without a flow assumption we can't estimate volume, hide the panel
+        bar.hidden = true;
+        return;
+    }
+
+    let totalLitres = 0;
+    await Promise.all(boreholeSerials.map(async serial => {
+        try {
+            const schedules = await netro.schedules(serial, { start_date: startStr, end_date: endStr });
+            for (const s of schedules) {
+                if (s.status !== 'EXECUTED' && s.status !== 'EXECUTING') continue;
+                const st = parseNetroTime(s.start_time);
+                const en = parseNetroTime(s.end_time);
+                const cutoff = en > today ? today : en; // don't credit future end times
+                const durMin = Math.max(0, (cutoff - st) / 60000);
+                totalLitres += durMin * flow;
+            }
+        } catch {}
+    }));
+
+    const ratePerM3 = config.mains_water_cost_per_m3 ?? 5;
+    const cubicMetres = totalLitres / 1000;
+    const cost = cubicMetres * ratePerM3;
+
+    bar.hidden = false;
+    document.getElementById('savings-rate').textContent = ratePerM3;
+    document.getElementById('savings-amount').textContent = `£${cost.toFixed(2)}`;
+    document.getElementById('savings-litres').textContent = `${Math.round(totalLitres).toLocaleString()} litres`;
 }
 
 // Fetch a 48h window of schedules across all controllers, compute what's running
@@ -1352,6 +1405,7 @@ function renderSettings() {
     document.getElementById('borehole-lpm').value = config.borehole_capacity_lpm ?? '';
     document.getElementById('mains-lpm').value = config.mains_capacity_lpm ?? '';
     document.getElementById('default-zone-flow').value = config.default_zone_flow_lpm ?? '';
+    document.getElementById('mains-cost').value = config.mains_water_cost_per_m3 ?? '';
 
     renderEditList(
         'controller-edit-list',
