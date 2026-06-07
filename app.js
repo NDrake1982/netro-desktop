@@ -1077,8 +1077,14 @@ function isDashboardActiveAndVisible() {
         && document.getElementById('dashboard').classList.contains('active');
 }
 
+function isStatusViewActiveAndVisible() {
+    return document.visibilityState === 'visible'
+        && (document.getElementById('dashboard').classList.contains('active')
+         || document.getElementById('timeline').classList.contains('active'));
+}
+
 function shouldRefreshStatusBar() {
-    return isDashboardActiveAndVisible() && hasController(config);
+    return isStatusViewActiveAndVisible() && hasController(config);
 }
 
 function shouldRefreshSensors() {
