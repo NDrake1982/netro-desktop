@@ -702,6 +702,8 @@ async function loadSavings() {
     const cost = cubicMetres * ratePerM3;
 
     bar.hidden = false;
+    const sinceDate = weekAgo.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+    document.getElementById('savings-since').textContent = `since ${sinceDate}`;
     document.getElementById('savings-rate').textContent = ratePerM3;
     document.getElementById('savings-amount').textContent = `£${cost.toFixed(2)}`;
     document.getElementById('savings-litres').textContent = `${Math.round(totalLitres).toLocaleString()} litres`;
