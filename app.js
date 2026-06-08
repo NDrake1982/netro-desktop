@@ -1422,6 +1422,7 @@ function renderSettings() {
     document.getElementById('mains-lpm').value = config.mains_capacity_lpm ?? '';
     document.getElementById('default-zone-flow').value = config.default_zone_flow_lpm ?? '';
     document.getElementById('mains-cost').value = config.mains_water_cost_per_m3 ?? '';
+    document.getElementById('borehole-started').value = config.borehole_started_at ?? '';
 
     renderEditList(
         'controller-edit-list',
@@ -1511,6 +1512,8 @@ function captureSettingsToConfig() {
     config.default_zone_flow_lpm = dz ? parseFloat(dz) : null;
     const mc = document.getElementById('mains-cost').value;
     config.mains_water_cost_per_m3 = mc ? parseFloat(mc) : 5;
+    const bs = document.getElementById('borehole-started').value;
+    config.borehole_started_at = bs || null;
 }
 
 document.getElementById('add-controller').addEventListener('click', () => {

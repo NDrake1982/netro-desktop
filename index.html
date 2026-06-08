@@ -48,6 +48,12 @@
                         <span class="savings-detail">vs mains @ £<span id="savings-rate">5</span>/m³ · <span id="savings-litres">—</span></span>
                     </div>
                 </div>
+                <div id="savings-window" class="savings-window">
+                    <button class="range-btn" data-window="7d">7d</button>
+                    <button class="range-btn" data-window="30d">30d</button>
+                    <button class="range-btn" data-window="ytd">YTD</button>
+                    <button class="range-btn" data-window="install" title="Set the install date in Settings to enable this">Since install</button>
+                </div>
             </div>
 
             <div id="controllers" class="controller-grid">
@@ -158,6 +164,10 @@
                 <label class="field">
                     <span>Mains water cost (£/m³) — used by the savings counter on the Dashboard. UK average is ~£2-3 for water + £2-3 for wastewater, so £5 is typical combined.</span>
                     <input id="mains-cost" type="number" min="0" step="0.01" placeholder="5">
+                </label>
+                <label class="field">
+                    <span>Borehole install date — enables the "since install" option in the savings counter. Leave blank if unknown.</span>
+                    <input id="borehole-started" type="date">
                 </label>
 
                 <h2>Controllers</h2>

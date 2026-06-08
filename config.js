@@ -14,6 +14,7 @@ export function defaultConfig() {
         mains_capacity_lpm: null,
         default_zone_flow_lpm: null,
         mains_water_cost_per_m3: 5,
+        borehole_started_at: null, // ISO date e.g. "2026-01-15"; powers the "since install" savings window
     };
 }
 
