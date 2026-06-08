@@ -901,7 +901,7 @@ async function loadSensorDetail(serial, days) {
         return;
     }
 
-    document.getElementById('sensor-detail-name').textContent = cfg.nickname || info.name || serial;
+    document.getElementById('sensor-detail-name').textContent = info.name || cfg.nickname || serial;
     const batteryPct = info.battery_level != null ? Math.round(info.battery_level * 100) : null;
     const meta = [
         serial,
@@ -1223,7 +1223,7 @@ function pickLatestReading(dataArr) {
 }
 
 function renderSensorCard(cfg, info, latest, errorMsg) {
-    const name = cfg.nickname || info?.name || 'Sensor';
+    const name = info?.name || cfg.nickname || 'Sensor';
 
     if (errorMsg) {
         return `
@@ -1375,7 +1375,7 @@ function renderControllerCard(cfg, info, errorMsg) {
         <div class="controller-card">
             <div class="controller-card-header">
                 <div>
-                    <h3 class="controller-name">${escapeHtml(cfg.nickname || info.name)}</h3>
+                    <h3 class="controller-name">${escapeHtml(info.name || cfg.nickname)}</h3>
                     <div class="controller-serial">${escapeHtml(cfg.serial)} · ${activeZones.length} of ${info.zone_num} zones active</div>
                 </div>
                 <span class="status-pill ${statusClass}">${statusText}</span>
