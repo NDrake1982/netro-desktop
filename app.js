@@ -656,31 +656,68 @@ async function loadDashboard() {
 
 // Cost per cubic metre of mains water — used to estimate borehole savings.
 
-// Sum the volume drawn by EXECUTED borehole waterings in the last 7 days and
-// monetise it at the mains rate — that's the bill avoided.
+const SAVINGS_WINDOW_KEY = 'netro-desktop-savings-window-v1';
+function loadSavingsWindow() { return localStorage.getItem(SAVINGS_WINDOW_KEY) || '7d'; }
+function saveSavingsWindow(w) { localStorage.setItem(SAVINGS_WINDOW_KEY, w); }
+
+// Returns { start: Date, label: string } for a window key, or null if not applicable.
+function savingsRangeFor(windowKey, now = new Date()) {
+    const today = new Date(now); today.setHours(0, 0, 0, 0);
+    if (windowKey === '7d') {
+        const s = new Date(today); s.setDate(s.getDate() - 7);
+        return { start: s, label: 'in the last 7 days' };
+    }
+    if (windowKey === '30d') {
+        const s = new Date(today); s.setDate(s.getDate() - 30);
+        return { start: s, label: 'in the last 30 days' };
+    }
+    if (windowKey === 'ytd') {
+        const s = new Date(today.getFullYear(), 0, 1);
+        return { start: s, label: `year to date (since 1 Jan ${today.getFullYear()})` };
+    }
+    if (windowKey === 'install') {
+        if (!config.borehole_started_at) return null;
+        const s = new Date(config.borehole_started_at + 'T00:00:00');
+        if (isNaN(s)) return null;
+        const human = s.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+        return { start: s, label: `since borehole install (${human})` };
+    }
+    return null;
+}
+
+// Sum the volume drawn by EXECUTED borehole waterings over the selected window
+// and monetise it at the mains rate — that's the bill avoided.
 async function loadSavings() {
     const bar = document.getElementById('savings-bar');
     const boreholeSerials = config.controllers
         .filter(c => (c.water_source || 'borehole') === 'borehole')
         .map(c => c.serial);
 
-    if (!boreholeSerials.length) {
-        bar.hidden = true;
-        return;
-    }
-
-    const today = new Date();
-    const weekAgo = new Date(today);
-    weekAgo.setDate(today.getDate() - 7);
-    const startStr = toIsoDate(weekAgo);
-    const endStr = toIsoDate(today);
+    if (!boreholeSerials.length) { bar.hidden = true; return; }
 
     const flow = config.default_zone_flow_lpm || config.borehole_capacity_lpm;
-    if (!flow) {
-        // Without a flow assumption we can't estimate volume, hide the panel
-        bar.hidden = true;
-        return;
+    if (!flow) { bar.hidden = true; return; }
+
+    // Enable/disable the "Since install" button based on whether install date is set.
+    const installBtn = document.querySelector('#savings-window [data-window="install"]');
+    if (installBtn) {
+        installBtn.disabled = !config.borehole_started_at;
+        installBtn.title = config.borehole_started_at
+            ? `Since ${new Date(config.borehole_started_at + 'T00:00:00').toLocaleDateString()}`
+            : 'Set the install date in Settings to enable this';
     }
+
+    let windowKey = loadSavingsWindow();
+    let range = savingsRangeFor(windowKey);
+    if (!range) { windowKey = '7d'; range = savingsRangeFor(windowKey); }
+
+    document.querySelectorAll('#savings-window .range-btn').forEach(b => {
+        b.classList.toggle('active', b.dataset.window === windowKey);
+    });
+
+    const today = new Date();
+    const startStr = toIsoDate(range.start);
+    const endStr = toIsoDate(today);
 
     let totalLitres = 0;
     await Promise.all(boreholeSerials.map(async serial => {
@@ -690,7 +727,7 @@ async function loadSavings() {
                 if (s.status !== 'EXECUTED' && s.status !== 'EXECUTING') continue;
                 const st = parseNetroTime(s.start_time);
                 const en = parseNetroTime(s.end_time);
-                const cutoff = en > today ? today : en; // don't credit future end times
+                const cutoff = en > today ? today : en;
                 const durMin = Math.max(0, (cutoff - st) / 60000);
                 totalLitres += durMin * flow;
             }
@@ -702,12 +739,19 @@ async function loadSavings() {
     const cost = cubicMetres * ratePerM3;
 
     bar.hidden = false;
-    const sinceDate = weekAgo.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
-    document.getElementById('savings-since').textContent = `since ${sinceDate}`;
+    document.getElementById('savings-since').textContent = range.label;
     document.getElementById('savings-rate').textContent = ratePerM3;
     document.getElementById('savings-amount').textContent = `£${cost.toFixed(2)}`;
     document.getElementById('savings-litres').textContent = `${Math.round(totalLitres).toLocaleString()} litres`;
 }
+
+document.querySelectorAll('#savings-window .range-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        if (btn.disabled) return;
+        saveSavingsWindow(btn.dataset.window);
+        loadSavings();
+    });
+});
 
 // Fetch a 48h window of schedules across all controllers, compute what's running
 // right now and what's next, and render the top status bar.

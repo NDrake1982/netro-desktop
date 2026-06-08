@@ -270,6 +270,21 @@ main {
 }
 .savings-detail { font-size: 12px; color: var(--text-dim); }
 
+.savings-window {
+    display: flex;
+    gap: 4px;
+    background: var(--bg-elevated);
+    padding: 3px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    margin-left: auto;
+}
+
+.savings-window .range-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
 /* Status bar (Dashboard top) */
 .status-bar {
     display: flex;
