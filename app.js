@@ -911,11 +911,12 @@ async function loadSensorDetail(serial, days) {
     const startStr = toIsoDate(start);
     const endStr = toIsoDate(end);
 
-    let info, data;
+    let info, data, wateringLog;
     try {
-        [info, data] = await Promise.all([
+        [info, data, wateringLog] = await Promise.all([
             netro.sensorInfo(serial),
             netro.sensorData(serial, { start_date: startStr, end_date: endStr }),
+            fetchWateringLog().catch(() => []),
         ]);
     } catch (e) {
         content.innerHTML = `<div class="placeholder">Failed to load: ${escapeHtml(e.message)}</div>`;
@@ -968,8 +969,35 @@ async function loadSensorDetail(serial, days) {
     wireThresholdPanel(serial);
     wireRulesPanel(serial);
 
+    // Build trigger markers — green dots on the moisture chart at the moment a
+    // sensor rule fired and watered. Place each marker at the moisture reading
+    // closest in time to the trigger, with a tooltip explaining what fired it.
+    const startMs = start.getTime();
+    const endMs = end.getTime();
+    const triggers = wateringLog
+        .filter(e => e.origin === 'sensor-rule' && e.sensor_serial === serial)
+        .map(e => ({ ...e, _t: new Date(e.start_time).getTime() }))
+        .filter(e => e._t >= startMs && e._t <= endMs);
+
+    const triggerMarkers = triggers.map(e => {
+        let nearest = null, minDelta = Infinity;
+        for (const d of sorted) {
+            if (d.moisture == null) continue;
+            const delta = Math.abs(parseNetroTime(d.time).getTime() - e._t);
+            if (delta < minDelta) { minDelta = delta; nearest = d; }
+        }
+        const y = nearest?.moisture ?? 0;
+        return {
+            x: e._t,
+            y,
+            _meta: e,
+        };
+    });
+
     sensorCharts.push(makeLineChart('moisture-chart', moistureSeries, {
         color: '#4cc2ff', yLabel: '%', yMin: 0, yMax: 100,
+        markers: triggerMarkers,
+        markerLabel: 'Sensor rule fired',
     }));
     sensorCharts.push(makeLineChart('temp-chart', tempSeries, {
         color: '#f6ad55', yLabel: '°C',
@@ -1248,31 +1276,67 @@ function chartCard(canvasId, title, currentValue) {
         </div>`;
 }
 
-function makeLineChart(canvasId, points, { color, yLabel, yMin, yMax }) {
+function makeLineChart(canvasId, points, { color, yLabel, yMin, yMax, markers, markerLabel }) {
     const ctx = document.getElementById(canvasId);
     if (!ctx) return null;
     const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
     const textDim = cssVar('--text-dim') || '#8b98a5';
     const border = cssVar('--border') || '#2a3441';
+    const green = cssVar('--green') || '#3fb950';
+
+    const datasets = [{
+        label: 'reading',
+        data: points,
+        borderColor: color,
+        backgroundColor: color + '22',
+        fill: true,
+        tension: 0.25,
+        pointRadius: 2,
+        pointHoverRadius: 4,
+        borderWidth: 2,
+    }];
+
+    if (markers && markers.length) {
+        datasets.push({
+            label: markerLabel || 'event',
+            data: markers,
+            type: 'scatter',
+            backgroundColor: green,
+            borderColor: green,
+            pointRadius: 6,
+            pointHoverRadius: 9,
+            pointStyle: 'circle',
+            showLine: false,
+            order: -1,
+        });
+    }
+
     return new Chart(ctx, {
         type: 'line',
-        data: {
-            datasets: [{
-                data: points,
-                borderColor: color,
-                backgroundColor: color + '22',
-                fill: true,
-                tension: 0.25,
-                pointRadius: 2,
-                pointHoverRadius: 4,
-                borderWidth: 2,
-            }],
-        },
+        data: { datasets },
         options: {
             responsive: true,
             maintainAspectRatio: false,
-            interaction: { mode: 'index', intersect: false },
-            plugins: { legend: { display: false } },
+            interaction: { mode: 'nearest', intersect: false },
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        label(ctx) {
+                            const dsLabel = ctx.dataset.label;
+                            if (dsLabel === markerLabel) {
+                                const m = ctx.raw._meta;
+                                const t = new Date(m.start_time).toLocaleString();
+                                return [`▶ Sensor rule fired`,
+                                    `  ${m.metric} = ${m.reading_value != null ? Math.round(m.reading_value * 10) / 10 : '—'}`,
+                                    `  watered zone ${m.zone} for ${m.duration_min} min`,
+                                    `  at ${t}`];
+                            }
+                            return `${ctx.formattedValue}`;
+                        },
+                    },
+                },
+            },
             scales: {
                 x: {
                     type: 'time',
