@@ -1346,6 +1346,10 @@ async function loadHistory() {
     const startStr = toIsoDate(start);
     const endStr = toIsoDate(end);
 
+    // Pull the Worker's watering log in parallel — we use it to tag rows as
+    // sensor-rule / daily-cron vs generic manual.
+    const wateringLog = await fetchWateringLog().catch(() => []);
+
     const allRuns = [];
     await Promise.all(config.controllers.map(async c => {
         let info = dashboardControllerInfos.get(c.serial);
@@ -1362,6 +1366,7 @@ async function loadHistory() {
                 const st = parseNetroTime(s.start_time);
                 const en = parseNetroTime(s.end_time);
                 const zoneName = info?.zones?.find(z => z.ith === s.zone)?.name || `Zone ${s.zone}`;
+                const logHit = matchLog(wateringLog, c.serial, s.zone, st.getTime());
                 allRuns.push({
                     startMs: st.getTime(),
                     endMs: en.getTime(),
@@ -1369,6 +1374,8 @@ async function loadHistory() {
                     zone: s.zone,
                     zoneName,
                     source: s.source || '',
+                    origin: logHit?.origin || null,
+                    originMeta: logHit || null,
                 });
             }
         } catch {}
@@ -1403,6 +1410,25 @@ async function loadHistory() {
         </div>`;
 }
 
+async function fetchWateringLog() {
+    const creds = loadWorkerCreds();
+    if (!creds.url || !creds.token) return [];
+    const r = await fetch(`${creds.url}/watering-log`, { headers: { Authorization: `Bearer ${creds.token}` } });
+    if (!r.ok) return [];
+    return r.json();
+}
+
+// Match a Netro schedule entry against a Worker log entry by serial + zone + approximate start time.
+function matchLog(log, serial, zone, startMs) {
+    const TOLERANCE_MS = 5 * 60_000; // 5 minutes
+    return log.find(entry => {
+        if (entry.serial !== serial) return false;
+        if (entry.zone !== zone) return false;
+        const logMs = new Date(entry.start_time).getTime();
+        return Math.abs(logMs - startMs) <= TOLERANCE_MS;
+    });
+}
+
 function renderHistoryRow(r) {
     const start = new Date(r.startMs);
     const today = new Date(); today.setHours(0,0,0,0);
@@ -1416,7 +1442,33 @@ function renderHistoryRow(r) {
 
     const timeLabel = start.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false });
     const durMin = Math.round((r.endMs - r.startMs) / 60000);
-    const isManual = (r.source || '').toUpperCase() === 'MANUAL';
+
+    // Resolve the source pill: prefer the Worker-tagged origin, fall back to Netro's source field.
+    const isNetroManual = (r.source || '').toUpperCase() === 'MANUAL';
+    let pillClass, pillLabel, pillTitle = '';
+    if (r.origin === 'sensor-rule') {
+        pillClass = 'sensor';
+        pillLabel = 'Sensor';
+        const m = r.originMeta;
+        if (m) {
+            const sensorCfg = config.sensors.find(s => s.serial === m.sensor_serial);
+            const sensorName = sensorCfg?.nickname || m.sensor_serial;
+            const valueDisplay = m.reading_value != null ? Math.round(m.reading_value * 10) / 10 : '—';
+            pillTitle = `Triggered by ${sensorName} · ${m.metric}=${valueDisplay}`;
+        }
+    } else if (r.origin === 'daily-cron') {
+        pillClass = 'cron';
+        pillLabel = 'Cron';
+        pillTitle = 'Pushed by the daily recurring-pattern cron';
+    } else if (isNetroManual) {
+        pillClass = 'manual';
+        pillLabel = 'Manual';
+        pillTitle = 'Manually started from the app or Netro mobile';
+    } else {
+        pillClass = 'program';
+        pillLabel = 'Program';
+        pillTitle = 'Run by the Netro on-device smart schedule';
+    }
 
     return `
         <div class="history-row">
@@ -1424,7 +1476,7 @@ function renderHistoryRow(r) {
             <span>${escapeHtml(r.controller)}</span>
             <span>${r.zone} · ${escapeHtml(r.zoneName)}</span>
             <span>${durMin} min</span>
-            <span class="src-pill ${isManual ? 'manual' : 'program'}">${isManual ? 'Manual' : 'Program'}</span>
+            <span class="src-pill ${pillClass}" title="${escapeHtml(pillTitle)}">${pillLabel}</span>
         </div>`;
 }
 

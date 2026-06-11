@@ -80,7 +80,31 @@ async function handleHttp(request, env) {
         return cors(json(result));
     }
 
+    if (url.pathname === '/watering-log' && request.method === 'GET') {
+        const log = await loadWateringLog(env);
+        return cors(json(log));
+    }
+
     return cors(json({ error: 'not found' }, 404));
+}
+
+// Watering log — every netroWater call the Worker makes gets a row so the
+// dashboard can distinguish "sensor rule" runs from "daily cron" runs from
+// dashboard-button manual runs (which never touch the Worker).
+const WATERING_LOG_KEY = 'watering_log';
+const WATERING_LOG_MAX = 500;
+
+async function loadWateringLog(env) {
+    const raw = await env.CONFIG.get(WATERING_LOG_KEY);
+    if (!raw) return [];
+    try { return JSON.parse(raw); } catch { return []; }
+}
+
+async function appendWateringLog(env, entry) {
+    const log = await loadWateringLog(env);
+    log.push({ ...entry, logged_at: new Date().toISOString() });
+    if (log.length > WATERING_LOG_MAX) log.splice(0, log.length - WATERING_LOG_MAX);
+    await env.CONFIG.put(WATERING_LOG_KEY, JSON.stringify(log));
 }
 
 function json(body, status = 200) {
@@ -161,6 +185,14 @@ async function runDailyCron(env) {
         try {
             await netroWater(p.serial, [p.zone], p.duration_min, p.start_time_iso);
             pushed.push({ serial: p.serial, zone: p.zone, start: p.start_time_iso, duration: p.duration_min });
+            await appendWateringLog(env, {
+                origin: 'daily-cron',
+                serial: p.serial,
+                zone: p.zone,
+                start_time: p.start_time_iso,
+                duration_min: p.duration_min,
+                pattern_id: p.id || null,
+            });
         } catch (e) {
             failed.push({ serial: p.serial, zone: p.zone, error: e.message });
         }
@@ -312,6 +344,17 @@ async function evaluateSensorRules(env) {
                 try {
                     await netroWater(rule.action.controller_serial, [zones[zi]], durationMin, startIso);
                     queued.push({ zone: zones[zi], start: startIso });
+                    await appendWateringLog(env, {
+                        origin: 'sensor-rule',
+                        serial: rule.action.controller_serial,
+                        zone: zones[zi],
+                        start_time: startIso,
+                        duration_min: durationMin,
+                        sensor_serial: sensor.serial,
+                        rule_id: rule.id,
+                        metric: rule.metric,
+                        reading_value: value,
+                    });
                 } catch (e) {
                     stackFailures.push({ zone: zones[zi], error: e.message });
                 }
