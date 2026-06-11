@@ -317,6 +317,26 @@ document.getElementById('save-worker-config').addEventListener('click', async ()
     }
 });
 
+document.getElementById('eval-rules-now').addEventListener('click', async () => {
+    if (!workerCfg) return;
+    const creds = loadWorkerCreds();
+    toast('Evaluating sensor rules on the Worker…');
+    try {
+        const r = await fetch(`${creds.url}/evaluate-rules-now`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${creds.token}` },
+        });
+        if (!r.ok) throw new Error(`evaluate returned ${r.status}`);
+        const result = await r.json();
+        const tt = result.triggered || 0;
+        const ff = result.failed || 0;
+        toast(`Checked ${result.checked || 0} sensor(s) · triggered ${tt}${ff ? ` · failed ${ff}` : ''}`, ff ? 'error' : 'success');
+        console.log('Sensor rules result:', result);
+    } catch (e) {
+        toast('Evaluate failed: ' + e.message, 'error');
+    }
+});
+
 document.getElementById('run-now').addEventListener('click', async () => {
     if (!workerCfg) return;
     const creds = loadWorkerCreds();
