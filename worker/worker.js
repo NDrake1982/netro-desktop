@@ -19,10 +19,20 @@ export default {
     async fetch(request, env) {
         return handleHttp(request, env);
     },
-    async scheduled(_event, env, ctx) {
-        ctx.waitUntil(
-            runDailyCron(env).then(r => console.log('cron:', JSON.stringify(r)))
-        );
+    async scheduled(event, env, ctx) {
+        // Two cron triggers fire this handler:
+        //   "0 3 * * *"   → daily recurring-pattern push (long-running stagger)
+        //   "*/15 * * * *" → sensor-trigger rule evaluation (short, idempotent w/ cooldown)
+        const cron = event.cron || '';
+        if (cron.startsWith('*/15')) {
+            ctx.waitUntil(
+                evaluateSensorRules(env).then(r => console.log('sensor-cron:', JSON.stringify(r)))
+            );
+        } else {
+            ctx.waitUntil(
+                runDailyCron(env).then(r => console.log('cron:', JSON.stringify(r)))
+            );
+        }
     },
 };
 
@@ -65,6 +75,11 @@ async function handleHttp(request, env) {
         return cors(json(result));
     }
 
+    if (url.pathname === '/evaluate-rules-now' && request.method === 'POST') {
+        const result = await evaluateSensorRules(env);
+        return cors(json(result));
+    }
+
     return cors(json({ error: 'not found' }, 404));
 }
 
@@ -98,9 +113,10 @@ function defaultConfig() {
         borehole_capacity_lpm: 20,
         default_zone_flow_lpm: null, // null → use borehole capacity as zone flow (conservative)
         controllers: [],             // [{ serial, nickname }]
-        sensors: [],                 // [{ serial, nickname }]
+        sensors: [],                 // [{ serial, nickname, rules: [] }]
         patterns: [],                // see below for shape
         last_run: null,
+        last_sensor_eval: null,
     };
 }
 
@@ -218,6 +234,123 @@ function peakOverlap(placed, startMs, endMs) {
 function timeToUtcMsToday(now, hhmm) {
     const [h, m] = (hhmm || '06:00').split(':').map(Number);
     return Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), h || 0, m || 0, 0);
+}
+
+// ---------- Sensor-triggered irrigation ----------
+// Each sensor can carry an array `rules` of objects:
+// {
+//   id, enabled,
+//   metric: 'moisture' | 'celsius' | 'sunlight',
+//   comparator: '<' | '>',
+//   threshold: number,
+//   action: { controller_serial, zone, duration_min },
+//   cooldown_hours: number,
+//   last_triggered_at: ISO string | null
+// }
+async function evaluateSensorRules(env) {
+    const cfg = await loadConfig(env);
+    const now = new Date();
+    const sensors = (cfg.sensors || []).filter(s => Array.isArray(s.rules) && s.rules.some(r => r.enabled !== false));
+    if (!sensors.length) {
+        return { ts: now.toISOString(), checked: 0, triggered: 0, message: 'no sensors with rules' };
+    }
+
+    const triggered = [];
+    const failed = [];
+    let configDirty = false;
+
+    for (const sensor of sensors) {
+        let latest;
+        try {
+            latest = await fetchLatestSensorReading(sensor.serial);
+        } catch (e) {
+            failed.push({ serial: sensor.serial, error: `reading fetch: ${e.message}` });
+            continue;
+        }
+        if (!latest) continue;
+
+        for (const rule of sensor.rules) {
+            if (rule.enabled === false) continue;
+            const value = latest[rule.metric];
+            if (value == null) continue;
+            const matched = rule.comparator === '>' ? value > rule.threshold : value < rule.threshold;
+            if (!matched) continue;
+
+            // Cooldown check
+            if (rule.last_triggered_at && rule.cooldown_hours) {
+                const lastMs = new Date(rule.last_triggered_at).getTime();
+                const ageHrs = (now.getTime() - lastMs) / 3_600_000;
+                if (ageHrs < rule.cooldown_hours) continue;
+            }
+
+            // Fire it
+            try {
+                await netroWater(
+                    rule.action.controller_serial,
+                    [rule.action.zone],
+                    rule.action.duration_min || 10,
+                    null
+                );
+                rule.last_triggered_at = now.toISOString();
+                configDirty = true;
+                triggered.push({
+                    sensor: sensor.serial,
+                    metric: rule.metric,
+                    value,
+                    threshold: rule.threshold,
+                    zone: rule.action.zone,
+                    controller: rule.action.controller_serial,
+                });
+            } catch (e) {
+                failed.push({ sensor: sensor.serial, rule: rule.id, error: e.message });
+            }
+        }
+    }
+
+    if (configDirty) await saveConfig(env, cfg);
+
+    const result = {
+        ts: now.toISOString(),
+        checked: sensors.length,
+        triggered: triggered.length,
+        failed: failed.length,
+        triggered_list: triggered,
+        failed_list: failed,
+    };
+    // Stash on config for visibility from dashboard.
+    cfg.last_sensor_eval = result;
+    await saveConfig(env, cfg);
+    return result;
+}
+
+async function fetchLatestSensorReading(serial) {
+    // Pull the last 1 day of readings and pick the newest.
+    const end = new Date();
+    const start = new Date(end.getTime() - 86_400_000);
+    const params = new URLSearchParams({
+        key: serial,
+        start_date: toIsoDate(start),
+        end_date: toIsoDate(end),
+    });
+    const r = await fetch(`${NETRO_BASE}/sensor_data.json?${params}`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const j = await r.json();
+    if (j.status !== 'OK') throw new Error(`Netro: ${(j.errors?.[0]?.message) || j.status}`);
+    const arr = j.data?.sensor_data || [];
+    if (!arr.length) return null;
+    return [...arr].sort((a, b) => parseTime(b.time) - parseTime(a.time))[0];
+}
+
+function toIsoDate(d) {
+    const y = d.getUTCFullYear();
+    const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(d.getUTCDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+}
+
+function parseTime(s) {
+    if (!s) return 0;
+    return new Date(s.endsWith('Z') || /[+-]\d{2}:?\d{2}$/.test(s) ? s : s + 'Z').getTime();
 }
 
 // ---------- Netro API ----------

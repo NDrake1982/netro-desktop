@@ -942,8 +942,10 @@ async function loadSensorDetail(serial, days) {
         ${chartCard('light-chart', 'Light',
             latest.sunlight != null ? (+latest.sunlight).toFixed(2) : '—')}
         ${renderThresholdPanel(cfg)}
+        ${renderRulesPanel(cfg)}
     `;
     wireThresholdPanel(serial);
+    wireRulesPanel(serial);
 
     sensorCharts.push(makeLineChart('moisture-chart', moistureSeries, {
         color: '#4cc2ff', yLabel: '%', yMin: 0, yMax: 100,
@@ -1035,6 +1037,144 @@ function wireThresholdPanel(serial) {
         loadSensorDetail(serial, currentSensorRangeDays); // re-render with defaults
         loadDashboard();
         toast('Reset to defaults', 'success');
+    });
+}
+
+// ---------- Sensor-triggered irrigation rules ----------
+function renderRulesPanel(sensorCfg) {
+    const rules = Array.isArray(sensorCfg.rules) ? sensorCfg.rules : [];
+    const rows = rules.map((r, i) => renderRuleRow(r, i)).join('') ||
+        `<p class="hint">No rules yet. Click + Add rule below.</p>`;
+
+    return `
+        <div class="chart-card threshold-panel">
+            <h3>Auto-trigger irrigation</h3>
+            <p class="hint" style="margin-top:0;">
+                When this sensor's reading crosses a threshold, automatically run the chosen zone.
+                The Cloudflare Worker checks every 15 minutes. Use the cooldown to avoid back-to-back waterings.
+            </p>
+            <div id="rules-list">${rows}</div>
+            <div class="threshold-actions">
+                <button class="btn-secondary" id="add-rule">+ Add rule</button>
+                <button class="btn-primary" id="save-rules">Save rules</button>
+            </div>
+        </div>`;
+}
+
+function renderRuleRow(r, i) {
+    const controllerOpts = config.controllers.map(c =>
+        `<option value="${escapeHtml(c.serial)}" ${c.serial === r.action?.controller_serial ? 'selected' : ''}>${escapeHtml(c.nickname || c.serial)}</option>`
+    ).join('');
+
+    const enabled = r.enabled !== false;
+    const lastFired = r.last_triggered_at
+        ? `last fired ${formatAgo(r.last_triggered_at)}`
+        : 'never fired';
+
+    return `
+        <div class="rule-row ${enabled ? '' : 'disabled'}" data-i="${i}">
+            <div class="rule-when">
+                <span class="rule-label">When</span>
+                <select class="r-metric">
+                    <option value="moisture" ${r.metric === 'moisture' ? 'selected' : ''}>Moisture (%)</option>
+                    <option value="celsius" ${r.metric === 'celsius' ? 'selected' : ''}>Temperature (°C)</option>
+                    <option value="sunlight" ${r.metric === 'sunlight' ? 'selected' : ''}>Light</option>
+                </select>
+                <select class="r-comp">
+                    <option value="<" ${r.comparator !== '>' ? 'selected' : ''}>is below</option>
+                    <option value=">" ${r.comparator === '>' ? 'selected' : ''}>is above</option>
+                </select>
+                <input class="r-threshold" type="number" step="0.1" value="${r.threshold ?? 25}" style="width:80px;">
+            </div>
+            <div class="rule-then">
+                <span class="rule-label">then run</span>
+                <select class="r-controller">${controllerOpts}</select>
+                <input class="r-zone" type="number" min="1" max="24" value="${r.action?.zone ?? 1}" style="width:60px;">
+                <span class="rule-label">for</span>
+                <input class="r-duration" type="number" min="1" max="240" value="${r.action?.duration_min ?? 10}" style="width:60px;">
+                <span class="rule-label">min · cooldown</span>
+                <input class="r-cooldown" type="number" min="0" max="168" value="${r.cooldown_hours ?? 12}" style="width:60px;">
+                <span class="rule-label">h</span>
+            </div>
+            <div class="rule-meta">
+                <label class="toggle">
+                    <input class="r-enabled" type="checkbox" ${enabled ? 'checked' : ''}>
+                    Enabled
+                </label>
+                <span class="hint" style="margin:0;">${lastFired}</span>
+                <button class="btn-danger" data-remove-rule="${i}">Remove</button>
+            </div>
+        </div>`;
+}
+
+function wireRulesPanel(serial) {
+    const list = document.getElementById('rules-list');
+
+    document.getElementById('add-rule').addEventListener('click', () => {
+        captureRulesToConfig(serial);
+        const s = config.sensors.find(s => s.serial === serial);
+        if (!s) return;
+        s.rules = s.rules || [];
+        s.rules.push({
+            id: crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2),
+            enabled: true,
+            metric: 'moisture',
+            comparator: '<',
+            threshold: 25,
+            action: {
+                controller_serial: config.controllers[0]?.serial || '',
+                zone: 1,
+                duration_min: 10,
+            },
+            cooldown_hours: 12,
+            last_triggered_at: null,
+        });
+        loadSensorDetail(serial, currentSensorRangeDays);
+    });
+
+    list.querySelectorAll('[data-remove-rule]').forEach(b => {
+        b.addEventListener('click', () => {
+            captureRulesToConfig(serial);
+            const s = config.sensors.find(s => s.serial === serial);
+            if (!s?.rules) return;
+            s.rules.splice(+b.dataset.removeRule, 1);
+            loadSensorDetail(serial, currentSensorRangeDays);
+        });
+    });
+
+    document.getElementById('save-rules').addEventListener('click', async () => {
+        captureRulesToConfig(serial);
+        const result = await saveConfig(config);
+        if (result.cloud === 'failed') {
+            toast('Saved locally; cloud save failed: ' + result.error, 'error');
+        } else if (result.cloud === 'ok') {
+            toast('Rules saved to the Worker', 'success');
+        } else {
+            toast('Rules saved locally (no Worker connected — rules only fire if the Worker is configured)', 'error');
+        }
+    });
+}
+
+function captureRulesToConfig(serial) {
+    const s = config.sensors.find(s => s.serial === serial);
+    if (!s) return;
+    const rows = [...document.querySelectorAll('#rules-list .rule-row')];
+    s.rules = rows.map((row, i) => {
+        const existing = s.rules?.[i] || {};
+        return {
+            id: existing.id || (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2)),
+            enabled: row.querySelector('.r-enabled').checked,
+            metric: row.querySelector('.r-metric').value,
+            comparator: row.querySelector('.r-comp').value,
+            threshold: parseFloat(row.querySelector('.r-threshold').value),
+            action: {
+                controller_serial: row.querySelector('.r-controller').value,
+                zone: parseInt(row.querySelector('.r-zone').value) || 1,
+                duration_min: parseInt(row.querySelector('.r-duration').value) || 10,
+            },
+            cooldown_hours: parseFloat(row.querySelector('.r-cooldown').value) || 0,
+            last_triggered_at: existing.last_triggered_at || null,
+        };
     });
 }
 
