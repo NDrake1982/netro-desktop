@@ -1071,6 +1071,11 @@ function renderRuleRow(r, i) {
         ? `last fired ${formatAgo(r.last_triggered_at)}`
         : 'never fired';
 
+    // Backwards-compat: old single-zone rules used `action.zone` (number); new ones use `action.zones` (array).
+    const selectedZones = Array.isArray(r.action?.zones)
+        ? r.action.zones
+        : (r.action?.zone ? [r.action.zone] : []);
+
     return `
         <div class="rule-row ${enabled ? '' : 'disabled'}" data-i="${i}">
             <div class="rule-when">
@@ -1087,14 +1092,19 @@ function renderRuleRow(r, i) {
                 <input class="r-threshold" type="number" step="0.1" value="${r.threshold ?? 25}" style="width:80px;">
             </div>
             <div class="rule-then">
-                <span class="rule-label">then run</span>
+                <span class="rule-label">then run on</span>
                 <select class="r-controller">${controllerOpts}</select>
-                <input class="r-zone" type="number" min="1" max="24" value="${r.action?.zone ?? 1}" style="width:60px;">
                 <span class="rule-label">for</span>
                 <input class="r-duration" type="number" min="1" max="240" value="${r.action?.duration_min ?? 10}" style="width:60px;">
-                <span class="rule-label">min · cooldown</span>
+                <span class="rule-label">min each · cooldown</span>
                 <input class="r-cooldown" type="number" min="0" max="168" value="${r.cooldown_hours ?? 12}" style="width:60px;">
                 <span class="rule-label">h</span>
+            </div>
+            <div class="rule-zones-wrap">
+                <span class="rule-label">Zones (run sequentially, back-to-back):</span>
+                <div class="rule-zones" data-selected='${JSON.stringify(selectedZones)}'>
+                    ${renderRuleZoneCheckboxes(r.action?.controller_serial, selectedZones)}
+                </div>
             </div>
             <div class="rule-meta">
                 <label class="toggle">
@@ -1105,6 +1115,24 @@ function renderRuleRow(r, i) {
                 <button class="btn-danger" data-remove-rule="${i}">Remove</button>
             </div>
         </div>`;
+}
+
+function renderRuleZoneCheckboxes(controllerSerial, selectedZones) {
+    const info = dashboardControllerInfos.get(controllerSerial);
+    if (!info?.zones) {
+        return `<span class="hint" style="margin:0;">Pick a controller above to see its zones.</span>`;
+    }
+    const activeZones = info.zones.filter(z => z.enabled);
+    if (!activeZones.length) {
+        return `<span class="hint" style="margin:0;">No active zones on this controller.</span>`;
+    }
+    const sel = new Set(selectedZones || []);
+    return activeZones.map(z => `
+        <label class="zone-chip">
+            <input type="checkbox" data-zone="${z.ith}" ${sel.has(z.ith) ? 'checked' : ''}>
+            <span>${z.ith} · ${escapeHtml(z.name)}</span>
+        </label>
+    `).join('');
 }
 
 function wireRulesPanel(serial) {
@@ -1123,13 +1151,22 @@ function wireRulesPanel(serial) {
             threshold: 25,
             action: {
                 controller_serial: config.controllers[0]?.serial || '',
-                zone: 1,
+                zones: [],
                 duration_min: 10,
             },
             cooldown_hours: 12,
             last_triggered_at: null,
         });
         loadSensorDetail(serial, currentSensorRangeDays);
+    });
+
+    // Re-render the zone checkbox grid when the controller changes for a row.
+    list.querySelectorAll('.r-controller').forEach(sel => {
+        sel.addEventListener('change', () => {
+            const row = sel.closest('.rule-row');
+            const wrap = row.querySelector('.rule-zones');
+            wrap.innerHTML = renderRuleZoneCheckboxes(sel.value, []);
+        });
     });
 
     list.querySelectorAll('[data-remove-rule]').forEach(b => {
@@ -1161,6 +1198,9 @@ function captureRulesToConfig(serial) {
     const rows = [...document.querySelectorAll('#rules-list .rule-row')];
     s.rules = rows.map((row, i) => {
         const existing = s.rules?.[i] || {};
+        const checkedZones = [...row.querySelectorAll('.rule-zones input[type="checkbox"]:checked')]
+            .map(cb => parseInt(cb.dataset.zone))
+            .filter(n => !isNaN(n));
         return {
             id: existing.id || (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2)),
             enabled: row.querySelector('.r-enabled').checked,
@@ -1169,7 +1209,7 @@ function captureRulesToConfig(serial) {
             threshold: parseFloat(row.querySelector('.r-threshold').value),
             action: {
                 controller_serial: row.querySelector('.r-controller').value,
-                zone: parseInt(row.querySelector('.r-zone').value) || 1,
+                zones: checkedZones,
                 duration_min: parseInt(row.querySelector('.r-duration').value) || 10,
             },
             cooldown_hours: parseFloat(row.querySelector('.r-cooldown').value) || 0,

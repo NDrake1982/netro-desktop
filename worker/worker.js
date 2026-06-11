@@ -283,14 +283,41 @@ async function evaluateSensorRules(env) {
                 if (ageHrs < rule.cooldown_hours) continue;
             }
 
-            // Fire it
+            // Normalize zones (backwards compat with old single-zone schema).
+            const zones = Array.isArray(rule.action.zones) && rule.action.zones.length
+                ? rule.action.zones
+                : (rule.action.zone ? [rule.action.zone] : []);
+            if (!zones.length) {
+                failed.push({ sensor: sensor.serial, rule: rule.id, error: 'rule has no zones selected' });
+                continue;
+            }
+
+            // Skip if the rule's controller already has something running — avoid clashing with an active program.
             try {
-                await netroWater(
-                    rule.action.controller_serial,
-                    [rule.action.zone],
-                    rule.action.duration_min || 10,
-                    null
-                );
+                const isBusy = await isControllerRunning(rule.action.controller_serial, now);
+                if (isBusy) continue;
+            } catch (e) {
+                // If the check itself fails, fail safe by skipping rather than firing.
+                failed.push({ sensor: sensor.serial, rule: rule.id, error: `busy-check: ${e.message}` });
+                continue;
+            }
+
+            // Stack zones sequentially: zone[0] starts now, zone[1] starts at end of zone[0], etc.
+            const durationMin = rule.action.duration_min || 10;
+            const queued = [];
+            const stackFailures = [];
+            for (let zi = 0; zi < zones.length; zi++) {
+                const startMs = now.getTime() + zi * durationMin * 60_000;
+                const startIso = new Date(startMs).toISOString().replace(/\.\d+Z$/, 'Z');
+                try {
+                    await netroWater(rule.action.controller_serial, [zones[zi]], durationMin, startIso);
+                    queued.push({ zone: zones[zi], start: startIso });
+                } catch (e) {
+                    stackFailures.push({ zone: zones[zi], error: e.message });
+                }
+            }
+
+            if (queued.length) {
                 rule.last_triggered_at = now.toISOString();
                 configDirty = true;
                 triggered.push({
@@ -298,11 +325,12 @@ async function evaluateSensorRules(env) {
                     metric: rule.metric,
                     value,
                     threshold: rule.threshold,
-                    zone: rule.action.zone,
                     controller: rule.action.controller_serial,
+                    queued,
                 });
-            } catch (e) {
-                failed.push({ sensor: sensor.serial, rule: rule.id, error: e.message });
+            }
+            if (stackFailures.length) {
+                failed.push({ sensor: sensor.serial, rule: rule.id, stackFailures });
             }
         }
     }
@@ -321,6 +349,25 @@ async function evaluateSensorRules(env) {
     cfg.last_sensor_eval = result;
     await saveConfig(env, cfg);
     return result;
+}
+
+// Returns true if any schedule on the given controller is currently EXECUTING.
+async function isControllerRunning(serial, now) {
+    const today = toIsoDate(now);
+    const params = new URLSearchParams({ key: serial, start_date: today, end_date: today });
+    const r = await fetch(`${NETRO_BASE}/schedules.json?${params}`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const j = await r.json();
+    if (j.status !== 'OK') throw new Error(`Netro: ${(j.errors?.[0]?.message) || j.status}`);
+    const scheds = j.data?.schedules || [];
+    const nowMs = now.getTime();
+    for (const s of scheds) {
+        if (s.status !== 'EXECUTING') continue;
+        const st = parseTime(s.start_time);
+        const en = parseTime(s.end_time);
+        if (st <= nowMs && en > nowMs) return true;
+    }
+    return false;
 }
 
 async function fetchLatestSensorReading(serial) {
