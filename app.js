@@ -66,6 +66,7 @@ function switchTab(name) {
     }
     if (name === 'settings') renderSettings();
     if (name === 'timeline') loadTimeline();
+    if (name === 'history') loadHistory();
     if (name === 'automation') initAutomationTab();
 }
 
