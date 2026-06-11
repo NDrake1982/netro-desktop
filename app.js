@@ -1319,6 +1319,115 @@ let sensorsTimer = null;
 const STATUS_REFRESH_MS = 60_000;
 const SENSORS_REFRESH_MS = 15 * 60_000;
 
+// ---------- History tab ----------
+let historyRangeDays = 7;
+
+document.querySelectorAll('#history-range .range-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        document.querySelectorAll('#history-range .range-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        historyRangeDays = +btn.dataset.days;
+        loadHistory();
+    });
+});
+
+async function loadHistory() {
+    const container = document.getElementById('history-content');
+    if (!hasController(config)) {
+        container.innerHTML = `<div class="placeholder">Add a controller in Settings first.</div>`;
+        return;
+    }
+
+    container.innerHTML = `<div class="loading">Loading…</div>`;
+
+    const end = new Date();
+    const start = new Date(end);
+    start.setDate(end.getDate() - historyRangeDays);
+    const startStr = toIsoDate(start);
+    const endStr = toIsoDate(end);
+
+    const allRuns = [];
+    await Promise.all(config.controllers.map(async c => {
+        let info = dashboardControllerInfos.get(c.serial);
+        if (!info) {
+            try {
+                info = await netro.info(c.serial);
+                dashboardControllerInfos.set(c.serial, info);
+            } catch {}
+        }
+        try {
+            const schedules = await netro.schedules(c.serial, { start_date: startStr, end_date: endStr });
+            for (const s of schedules) {
+                if (s.status !== 'EXECUTED' && s.status !== 'EXECUTING') continue;
+                const st = parseNetroTime(s.start_time);
+                const en = parseNetroTime(s.end_time);
+                const zoneName = info?.zones?.find(z => z.ith === s.zone)?.name || `Zone ${s.zone}`;
+                allRuns.push({
+                    startMs: st.getTime(),
+                    endMs: en.getTime(),
+                    controller: c.nickname || info?.name || c.serial,
+                    zone: s.zone,
+                    zoneName,
+                    source: s.source || '',
+                });
+            }
+        } catch {}
+    }));
+
+    if (!allRuns.length) {
+        container.innerHTML = `<div class="placeholder">No waterings in the last ${historyRangeDays} days.</div>`;
+        return;
+    }
+
+    allRuns.sort((a, b) => b.startMs - a.startMs);
+
+    const total = allRuns.length;
+    const totalMin = Math.round(allRuns.reduce((n, r) => n + (r.endMs - r.startMs) / 60000, 0));
+    const totalHr = Math.floor(totalMin / 60);
+    const totalRem = totalMin % 60;
+    const totalLabel = totalHr ? `${totalHr}h ${totalRem}m` : `${totalRem}m`;
+
+    container.innerHTML = `
+        <div class="history-summary">
+            ${total} watering${total > 1 ? 's' : ''} · total run time ${totalLabel}
+        </div>
+        <div class="history-table">
+            <div class="history-row history-head">
+                <span>When</span>
+                <span>Controller</span>
+                <span>Zone</span>
+                <span>Duration</span>
+                <span>Source</span>
+            </div>
+            ${allRuns.map(renderHistoryRow).join('')}
+        </div>`;
+}
+
+function renderHistoryRow(r) {
+    const start = new Date(r.startMs);
+    const today = new Date(); today.setHours(0,0,0,0);
+    const yesterday = new Date(today); yesterday.setDate(yesterday.getDate() - 1);
+    const runDay = new Date(r.startMs); runDay.setHours(0,0,0,0);
+
+    let dayLabel;
+    if (+runDay === +today) dayLabel = 'Today';
+    else if (+runDay === +yesterday) dayLabel = 'Yesterday';
+    else dayLabel = start.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+
+    const timeLabel = start.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false });
+    const durMin = Math.round((r.endMs - r.startMs) / 60000);
+    const isManual = (r.source || '').toUpperCase() === 'MANUAL';
+
+    return `
+        <div class="history-row">
+            <span><span class="hist-day">${dayLabel}</span> <span class="hist-time">${timeLabel}</span></span>
+            <span>${escapeHtml(r.controller)}</span>
+            <span>${r.zone} · ${escapeHtml(r.zoneName)}</span>
+            <span>${durMin} min</span>
+            <span class="src-pill ${isManual ? 'manual' : 'program'}">${isManual ? 'Manual' : 'Program'}</span>
+        </div>`;
+}
+
 function isDashboardActiveAndVisible() {
     return document.visibilityState === 'visible'
         && document.getElementById('dashboard').classList.contains('active');
