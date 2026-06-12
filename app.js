@@ -1039,18 +1039,22 @@ async function loadSensorDetail(serial, days) {
         };
     });
 
+    // Lock all four charts to the same x-axis window so they align visually.
+    const xMin = start.getTime();
+    const xMax = end.getTime();
+
     sensorCharts.push(makeLineChart('moisture-chart', moistureSeries, {
-        color: '#4cc2ff', yLabel: '%', yMin: 0, yMax: 100,
+        color: '#4cc2ff', yLabel: '%', yMin: 0, yMax: 100, xMin, xMax,
         markers: triggerMarkers,
         markerLabel: 'Sensor rule fired',
         unit: '%', datasetLabel: 'Moisture', valueDecimals: 0,
     }));
     sensorCharts.push(makeLineChart('temp-chart', tempSeries, {
-        color: '#f6ad55', yLabel: '°C',
+        color: '#f6ad55', yLabel: '°C', xMin, xMax,
         unit: '°C', datasetLabel: 'Temperature', valueDecimals: 1,
     }));
     sensorCharts.push(makeLineChart('light-chart', lightSeries, {
-        color: '#f6e05e', yLabel: '',
+        color: '#f6e05e', yLabel: '', xMin, xMax,
         unit: '', datasetLabel: 'Light', valueDecimals: 2,
     }));
 
@@ -1339,7 +1343,7 @@ function chartCard(canvasId, title, currentValue) {
         </div>`;
 }
 
-function makeLineChart(canvasId, points, { color, yLabel, yMin, yMax, markers, markerLabel, unit, datasetLabel, valueDecimals }) {
+function makeLineChart(canvasId, points, { color, yLabel, yMin, yMax, xMin, xMax, markers, markerLabel, unit, datasetLabel, valueDecimals }) {
     const ctx = document.getElementById(canvasId);
     if (!ctx) return null;
     const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -1431,6 +1435,8 @@ function makeLineChart(canvasId, points, { color, yLabel, yMin, yMax, markers, m
                     time: { tooltipFormat: 'PPpp' },
                     grid: { color: border, drawBorder: false },
                     ticks: { color: textDim, maxRotation: 0, autoSkip: true, maxTicksLimit: 8 },
+                    min: xMin,
+                    max: xMax,
                 },
                 y: {
                     title: yLabel ? { display: true, text: yLabel, color: textDim } : { display: false },
