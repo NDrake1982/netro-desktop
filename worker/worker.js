@@ -12,7 +12,7 @@
 //
 // See SETUP.md in this folder for deployment steps.
 
-const VERSION = '0.4.0';
+const VERSION = '0.5.0';
 const NETRO_BASE = 'https://api.netrohome.com/npa/v1';
 
 export default {
@@ -104,18 +104,37 @@ async function handleHttp(request, env) {
 
 // ---------- Pause / resume ----------
 
+const SNAPSHOT_KEY = (serial) => `paused_snapshot_${serial}`;
+
 async function pauseController(env, serial, untilIso) {
     const cfg = await loadConfig(env);
     const ctrl = cfg.controllers.find(c => c.serial === serial);
     if (!ctrl) return { ok: false, error: 'controller not found in worker config' };
+
+    const now = new Date();
+    const until = new Date(untilIso);
+
+    // Snapshot schedules that would have run during the pause window so we
+    // can replay them after the pause expires.
+    let snapshotCount = 0;
+    try {
+        const window = await fetchValidSchedulesInWindow(serial, now, until);
+        await env.CONFIG.put(SNAPSHOT_KEY(serial), JSON.stringify(window));
+        snapshotCount = window.length;
+    } catch (e) {
+        // If snapshot fails, pause still proceeds but warn
+        console.log(`snapshot failed for ${serial}: ${e.message}`);
+    }
+
     ctrl.paused_until = untilIso;
     await saveConfig(env, cfg);
+
     try {
         await netroSetStatus(serial, false);
     } catch (e) {
-        return { ok: true, warn: `paused in config but Netro disable failed: ${e.message}` };
+        return { ok: true, warn: `paused in config but Netro disable failed: ${e.message}`, snapshot: snapshotCount };
     }
-    return { ok: true, paused_until: untilIso };
+    return { ok: true, paused_until: untilIso, snapshot: snapshotCount };
 }
 
 async function resumeController(env, serial) {
@@ -124,12 +143,16 @@ async function resumeController(env, serial) {
     if (!ctrl) return { ok: false, error: 'controller not found' };
     ctrl.paused_until = null;
     await saveConfig(env, cfg);
+
+    let replayed = 0;
     try {
         await netroSetStatus(serial, true);
+        // Small delay so Netro has time to register the enable before we queue waters
+        replayed = await replayMissedSchedules(env, serial);
     } catch (e) {
         return { ok: true, warn: `resumed in config but Netro enable failed: ${e.message}` };
     }
-    return { ok: true };
+    return { ok: true, replayed };
 }
 
 async function resumeExpiredPauses(env) {
@@ -144,13 +167,75 @@ async function resumeExpiredPauses(env) {
         dirty = true;
         try {
             await netroSetStatus(ctrl.serial, true);
-            resumed.push(ctrl.serial);
+            const replayed = await replayMissedSchedules(env, ctrl.serial);
+            resumed.push({ serial: ctrl.serial, replayed });
         } catch (e) {
             resumed.push({ serial: ctrl.serial, warn: e.message });
         }
     }
     if (dirty) await saveConfig(env, cfg);
     return { resumed };
+}
+
+// Read upcoming VALID schedules from Netro that overlap a given window.
+async function fetchValidSchedulesInWindow(serial, fromDate, toDate) {
+    const startStr = toIsoDate(fromDate);
+    const endStr = toIsoDate(toDate);
+    const params = new URLSearchParams({ key: serial, start_date: startStr, end_date: endStr });
+    const r = await fetch(`${NETRO_BASE}/schedules.json?${params}`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const j = await r.json();
+    if (j.status !== 'OK') throw new Error(`Netro: ${(j.errors?.[0]?.message) || j.status}`);
+    const scheds = j.data?.schedules || [];
+    const fromMs = fromDate.getTime();
+    const toMs = toDate.getTime();
+    return scheds
+        .filter(s => s.status === 'VALID')
+        .filter(s => {
+            const st = parseTime(s.start_time);
+            return st >= fromMs && st < toMs;
+        })
+        .map(s => ({
+            zone: s.zone,
+            duration_min: Math.max(1, Math.round((parseTime(s.end_time) - parseTime(s.start_time)) / 60_000)),
+            original_start: s.start_time,
+        }));
+}
+
+// Replay missed schedules from the pause snapshot. Queues them back-to-back
+// starting one minute from now so they all run sequentially.
+async function replayMissedSchedules(env, serial) {
+    const raw = await env.CONFIG.get(SNAPSHOT_KEY(serial));
+    if (!raw) return 0;
+    let snapshot;
+    try { snapshot = JSON.parse(raw); } catch { snapshot = []; }
+    await env.CONFIG.delete(SNAPSHOT_KEY(serial));
+    if (!snapshot.length) return 0;
+
+    // Order by original_start to keep the original sequence intact.
+    snapshot.sort((a, b) => parseTime(a.original_start) - parseTime(b.original_start));
+
+    let cursorMs = Date.now() + 60_000; // first replay starts ~1 min from resume
+    let pushed = 0;
+    for (const s of snapshot) {
+        const startIso = new Date(cursorMs).toISOString().replace(/\.\d+Z$/, 'Z');
+        try {
+            await netroWater(serial, [s.zone], s.duration_min, startIso);
+            await appendWateringLog(env, {
+                origin: 'pause-replay',
+                serial,
+                zone: s.zone,
+                start_time: startIso,
+                duration_min: s.duration_min,
+                original_start: s.original_start,
+            });
+            pushed++;
+            cursorMs += s.duration_min * 60_000;
+        } catch (e) {
+            console.log(`replay failed for ${serial} z${s.zone}: ${e.message}`);
+        }
+    }
+    return pushed;
 }
 
 function isPaused(ctrl, now = new Date()) {

@@ -1559,6 +1559,15 @@ function renderHistoryRow(r) {
         pillClass = 'cron';
         pillLabel = 'Cron';
         pillTitle = 'Pushed by the daily recurring-pattern cron';
+    } else if (r.origin === 'pause-replay') {
+        pillClass = 'cron';
+        pillLabel = 'Replay';
+        const orig = r.originMeta?.original_start
+            ? new Date(r.originMeta.original_start).toLocaleString()
+            : '';
+        pillTitle = orig
+            ? `Replayed after pause — originally scheduled for ${orig}`
+            : 'Replayed after pause expired';
     } else if (isNetroManual) {
         pillClass = 'manual';
         pillLabel = 'Manual';
@@ -1976,11 +1985,13 @@ document.getElementById('pause-confirm').addEventListener('click', async () => {
         if (!r.ok) throw new Error(`pause returned ${r.status}`);
         const result = await r.json();
         if (!result.ok) throw new Error(result.error || 'pause failed');
-        // Also update the local config cache so the badge appears immediately
         const ctrl = config.controllers.find(c => c.serial === pauseCtx.serial);
         if (ctrl) ctrl.paused_until = pauseCtx.until.toISOString();
         await saveConfig(config);
-        toast(`Paused until ${pauseCtx.until.toLocaleString()}`, 'success');
+        const snapshotMsg = result.snapshot
+            ? ` · ${result.snapshot} scheduled run${result.snapshot > 1 ? 's' : ''} saved to replay on resume`
+            : '';
+        toast(`Paused until ${pauseCtx.until.toLocaleString()}${snapshotMsg}`, 'success');
         closePauseModal();
         loadDashboard();
     } catch (e) {
@@ -2001,10 +2012,14 @@ async function resumeControllerOnWorker(serial) {
             body: JSON.stringify({ serial }),
         });
         if (!r.ok) throw new Error(`resume returned ${r.status}`);
+        const result = await r.json();
         const ctrl = config.controllers.find(c => c.serial === serial);
         if (ctrl) ctrl.paused_until = null;
         await saveConfig(config);
-        toast('Resumed', 'success');
+        const replayedMsg = result.replayed
+            ? ` · replaying ${result.replayed} missed watering${result.replayed > 1 ? 's' : ''} back-to-back from ~1 min from now`
+            : '';
+        toast(`Resumed${replayedMsg}`, 'success');
         loadDashboard();
     } catch (e) {
         toast('Resume failed: ' + e.message, 'error');
