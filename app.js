@@ -1043,17 +1043,21 @@ async function loadSensorDetail(serial, days) {
         color: '#4cc2ff', yLabel: '%', yMin: 0, yMax: 100,
         markers: triggerMarkers,
         markerLabel: 'Sensor rule fired',
+        unit: '%', datasetLabel: 'Moisture', valueDecimals: 0,
     }));
     sensorCharts.push(makeLineChart('temp-chart', tempSeries, {
         color: '#f6ad55', yLabel: '°C',
+        unit: '°C', datasetLabel: 'Temperature', valueDecimals: 1,
     }));
     sensorCharts.push(makeLineChart('light-chart', lightSeries, {
         color: '#f6e05e', yLabel: '',
+        unit: '', datasetLabel: 'Light', valueDecimals: 2,
     }));
 
     if (batterySeries.length) {
         sensorCharts.push(makeLineChart('battery-chart', batterySeries, {
             color: '#3fb950', yLabel: '%', yMin: 0, yMax: 100,
+            unit: '%', datasetLabel: 'Battery', valueDecimals: 0,
         }));
     } else {
         // Show an empty state explaining the chart will populate once the Worker has logged data
@@ -1335,7 +1339,7 @@ function chartCard(canvasId, title, currentValue) {
         </div>`;
 }
 
-function makeLineChart(canvasId, points, { color, yLabel, yMin, yMax, markers, markerLabel }) {
+function makeLineChart(canvasId, points, { color, yLabel, yMin, yMax, markers, markerLabel, unit, datasetLabel, valueDecimals }) {
     const ctx = document.getElementById(canvasId);
     if (!ctx) return null;
     const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
