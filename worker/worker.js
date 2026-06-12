@@ -12,7 +12,7 @@
 //
 // See SETUP.md in this folder for deployment steps.
 
-const VERSION = '0.1.0';
+const VERSION = '0.3.0';
 const NETRO_BASE = 'https://api.netrohome.com/npa/v1';
 
 export default {

@@ -338,6 +338,41 @@ document.getElementById('eval-rules-now').addEventListener('click', async () => 
     }
 });
 
+document.getElementById('view-log').addEventListener('click', async () => {
+    const creds = loadWorkerCreds();
+    if (!creds.url || !creds.token) { toast('Connect to the Worker first', 'error'); return; }
+    try {
+        // Also check version on /status so we know exactly which Worker code is deployed.
+        const [statusResp, logResp] = await Promise.all([
+            fetch(`${creds.url}/status`),
+            fetch(`${creds.url}/watering-log`, { headers: { Authorization: `Bearer ${creds.token}` } }),
+        ]);
+        const status = statusResp.ok ? await statusResp.json() : { version: '?' };
+        if (!logResp.ok) throw new Error(`/watering-log returned ${logResp.status}`);
+        const log = await logResp.json();
+
+        const lines = [`Worker version: ${status.version}`, `Log entries: ${log.length}`, ''];
+        if (!log.length) {
+            lines.push('(no entries yet — only sensor-rule and daily-cron firings get logged;');
+            lines.push('manual Run buttons go straight to Netro and are NOT logged.)');
+        } else {
+            for (const e of log.slice(-10).reverse()) {
+                const when = new Date(e.logged_at || e.start_time).toLocaleString();
+                const ctrl = config.controllers.find(c => c.serial === e.serial)?.nickname || e.serial;
+                const extra = e.origin === 'sensor-rule'
+                    ? ` (sensor=${e.sensor_serial?.slice(-4)} ${e.metric}=${e.reading_value})`
+                    : '';
+                lines.push(`${when} · ${e.origin} · ${ctrl} z${e.zone} · ${e.duration_min}min${extra}`);
+            }
+            if (log.length > 10) lines.push(`… ${log.length - 10} older entries`);
+        }
+        document.getElementById('last-run-info').innerHTML =
+            `<div class="run-log">${escapeHtml(lines.join('\n'))}</div>`;
+    } catch (e) {
+        toast('Log fetch failed: ' + e.message, 'error');
+    }
+});
+
 document.getElementById('run-now').addEventListener('click', async () => {
     if (!workerCfg) return;
     const creds = loadWorkerCreds();
