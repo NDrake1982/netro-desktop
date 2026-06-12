@@ -334,16 +334,23 @@ async function evaluateSensorRules(env) {
                 continue;
             }
 
-            // Stack zones sequentially: zone[0] starts now, zone[1] starts at end of zone[0], etc.
+            // Stack zones sequentially:
+            //   zone[0] → no start_time, so Netro waters IMMEDIATELY
+            //   zone[1+] → start_time set to end-of-previous-zone, queued by Netro
+            // Sending start_time=now for zone[0] would let Netro bump it to the
+            // next hour slot (their docs require start_time strictly in the future).
             const durationMin = rule.action.duration_min || 10;
             const queued = [];
             const stackFailures = [];
             for (let zi = 0; zi < zones.length; zi++) {
-                const startMs = now.getTime() + zi * durationMin * 60_000;
-                const startIso = new Date(startMs).toISOString().replace(/\.\d+Z$/, 'Z');
+                let startIso = null;
+                if (zi > 0) {
+                    const startMs = now.getTime() + zi * durationMin * 60_000;
+                    startIso = new Date(startMs).toISOString().replace(/\.\d+Z$/, 'Z');
+                }
                 try {
                     await netroWater(rule.action.controller_serial, [zones[zi]], durationMin, startIso);
-                    queued.push({ zone: zones[zi], start: startIso });
+                    queued.push({ zone: zones[zi], start: startIso || 'immediate' });
                     await appendWateringLog(env, {
                         origin: 'sensor-rule',
                         serial: rule.action.controller_serial,
