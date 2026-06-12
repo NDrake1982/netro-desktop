@@ -1347,15 +1347,22 @@ function makeLineChart(canvasId, points, { color, yLabel, yMin, yMax, markers, m
     const border = cssVar('--border') || '#2a3441';
     const green = cssVar('--green') || '#3fb950';
 
+    const fmtValue = (v) => {
+        if (v == null || isNaN(v)) return '—';
+        const d = valueDecimals ?? (Math.abs(v) >= 100 ? 0 : 1);
+        return `${(+v).toFixed(d)}${unit || ''}`;
+    };
+    const mainLabel = datasetLabel || 'Value';
+
     const datasets = [{
-        label: 'reading',
+        label: mainLabel,
         data: points,
         borderColor: color,
         backgroundColor: color + '22',
         fill: true,
         tension: 0.25,
-        pointRadius: 2,
-        pointHoverRadius: 4,
+        pointRadius: 3,
+        pointHoverRadius: 6,
         borderWidth: 2,
     }];
 
@@ -1380,11 +1387,29 @@ function makeLineChart(canvasId, points, { color, yLabel, yMin, yMax, markers, m
         options: {
             responsive: true,
             maintainAspectRatio: false,
-            interaction: { mode: 'nearest', intersect: false },
+            interaction: { mode: 'nearest', axis: 'x', intersect: false },
             plugins: {
                 legend: { display: false },
                 tooltip: {
+                    backgroundColor: 'rgba(20,25,32,0.95)',
+                    borderColor: color,
+                    borderWidth: 1,
+                    titleColor: '#fff',
+                    bodyColor: '#fff',
+                    padding: 10,
                     callbacks: {
+                        title(items) {
+                            if (!items.length) return '';
+                            const d = new Date(items[0].parsed.x);
+                            return d.toLocaleString(undefined, {
+                                weekday: 'short',
+                                day: 'numeric',
+                                month: 'short',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                                hour12: false,
+                            });
+                        },
                         label(ctx) {
                             const dsLabel = ctx.dataset.label;
                             if (dsLabel === markerLabel) {
@@ -1395,7 +1420,7 @@ function makeLineChart(canvasId, points, { color, yLabel, yMin, yMax, markers, m
                                     `  watered zone ${m.zone} for ${m.duration_min} min`,
                                     `  at ${t}`];
                             }
-                            return `${ctx.formattedValue}`;
+                            return `${dsLabel}: ${fmtValue(ctx.parsed.y)}`;
                         },
                     },
                 },
