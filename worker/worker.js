@@ -12,7 +12,7 @@
 //
 // See SETUP.md in this folder for deployment steps.
 
-const VERSION = '0.5.0';
+const VERSION = '0.6.0';
 const NETRO_BASE = 'https://api.netrohome.com/npa/v1';
 
 export default {
@@ -28,7 +28,8 @@ export default {
             ctx.waitUntil((async () => {
                 const resumed = await resumeExpiredPauses(env);
                 const rules = await evaluateSensorRules(env);
-                console.log('tick:', JSON.stringify({ resumed, rules }));
+                const battery = await logBatteryAllSensors(env);
+                console.log('tick:', JSON.stringify({ resumed, rules, battery }));
             })());
         } else {
             ctx.waitUntil(
@@ -84,6 +85,13 @@ async function handleHttp(request, env) {
 
     if (url.pathname === '/watering-log' && request.method === 'GET') {
         const log = await loadWateringLog(env);
+        return cors(json(log));
+    }
+
+    if (url.pathname === '/battery-log' && request.method === 'GET') {
+        const serial = url.searchParams.get('serial');
+        if (!serial) return cors(json({ error: 'serial required' }, 400));
+        const log = await loadBatteryLog(env, serial);
         return cors(json(log));
     }
 
@@ -595,6 +603,58 @@ async function isControllerRunning(serial, now) {
         if (st <= nowMs && en > nowMs) return true;
     }
     return false;
+}
+
+// ---------- Battery log ----------
+// Polls /info.json for each sensor on every cron tick and records the battery
+// level so the dashboard can plot it over time. Lets you see solar charging
+// behaviour even though Netro doesn't expose historical battery data directly.
+
+const BATTERY_LOG_KEY = (serial) => `battery_log_${serial}`;
+const BATTERY_LOG_MAX = 2000;
+
+async function loadBatteryLog(env, serial) {
+    const raw = await env.CONFIG.get(BATTERY_LOG_KEY(serial));
+    if (!raw) return [];
+    try { return JSON.parse(raw); } catch { return []; }
+}
+
+async function appendBatteryLog(env, serial, batteryLevel) {
+    const log = await loadBatteryLog(env, serial);
+    // Skip duplicate consecutive entries with the same battery rounded to 1%
+    if (log.length) {
+        const last = log[log.length - 1];
+        if (Math.round(last.battery * 100) === Math.round(batteryLevel * 100)) {
+            // Still update the last timestamp so the gap doesn't grow indefinitely; just don't add a new row
+            return;
+        }
+    }
+    log.push({ ts: new Date().toISOString(), battery: batteryLevel });
+    if (log.length > BATTERY_LOG_MAX) log.splice(0, log.length - BATTERY_LOG_MAX);
+    await env.CONFIG.put(BATTERY_LOG_KEY(serial), JSON.stringify(log));
+}
+
+async function logBatteryAllSensors(env) {
+    const cfg = await loadConfig(env);
+    const sensors = cfg.sensors || [];
+    let polled = 0, errors = 0;
+    await Promise.all(sensors.map(async s => {
+        try {
+            const params = new URLSearchParams({ key: s.serial });
+            const r = await fetch(`${NETRO_BASE}/info.json?${params}`);
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            const j = await r.json();
+            if (j.status !== 'OK') throw new Error(`Netro: ${(j.errors?.[0]?.message) || j.status}`);
+            const battery = j.data?.sensor?.battery_level;
+            if (battery != null) {
+                await appendBatteryLog(env, s.serial, battery);
+                polled++;
+            }
+        } catch {
+            errors++;
+        }
+    }));
+    return { polled, errors };
 }
 
 async function fetchLatestSensorReading(serial) {

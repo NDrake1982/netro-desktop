@@ -946,12 +946,13 @@ async function loadSensorDetail(serial, days) {
     const startStr = toIsoDate(start);
     const endStr = toIsoDate(end);
 
-    let info, data, wateringLog;
+    let info, data, wateringLog, batteryLog;
     try {
-        [info, data, wateringLog] = await Promise.all([
+        [info, data, wateringLog, batteryLog] = await Promise.all([
             netro.sensorInfo(serial),
             netro.sensorData(serial, { start_date: startStr, end_date: endStr }),
             fetchWateringLog().catch(() => []),
+            fetchBatteryLog(serial).catch(() => []),
         ]);
     } catch (e) {
         content.innerHTML = `<div class="placeholder">Failed to load: ${escapeHtml(e.message)}</div>`;
@@ -991,6 +992,13 @@ async function loadSensorDetail(serial, days) {
         .filter(d => d.sunlight != null)
         .map(d => ({ x: parseNetroTime(d.time), y: +d.sunlight }));
 
+    // Trim battery log to the current chart range
+    const batterySeries = (batteryLog || [])
+        .map(e => ({ x: new Date(e.ts).getTime(), y: e.battery * 100 }))
+        .filter(p => p.x >= start.getTime() && p.x <= end.getTime());
+
+    const latestBatteryPct = info.battery_level != null ? Math.round(info.battery_level * 100) : null;
+
     content.innerHTML = `
         ${chartCard('moisture-chart', 'Moisture',
             latest.moisture != null ? `${Math.round(latest.moisture)}%` : '—')}
@@ -998,6 +1006,8 @@ async function loadSensorDetail(serial, days) {
             latest.celsius != null ? `${latest.celsius.toFixed(1)}°C` : '—')}
         ${chartCard('light-chart', 'Light',
             latest.sunlight != null ? (+latest.sunlight).toFixed(2) : '—')}
+        ${chartCard('battery-chart', 'Battery',
+            latestBatteryPct != null ? `${latestBatteryPct}%` : '—')}
         ${renderThresholdPanel(cfg)}
         ${renderRulesPanel(cfg)}
     `;
@@ -1040,6 +1050,20 @@ async function loadSensorDetail(serial, days) {
     sensorCharts.push(makeLineChart('light-chart', lightSeries, {
         color: '#f6e05e', yLabel: '',
     }));
+
+    if (batterySeries.length) {
+        sensorCharts.push(makeLineChart('battery-chart', batterySeries, {
+            color: '#3fb950', yLabel: '%', yMin: 0, yMax: 100,
+        }));
+    } else {
+        // Show an empty state explaining the chart will populate once the Worker has logged data
+        const canvas = document.getElementById('battery-chart');
+        if (canvas) {
+            const card = canvas.closest('.chart-card');
+            const wrap = canvas.parentElement;
+            wrap.innerHTML = `<div class="placeholder" style="padding:30px;">No battery history yet. The Worker logs battery level on each cron tick — data will appear here within an hour or so once the latest Worker is deployed.</div>`;
+        }
+    }
 }
 
 function renderThresholdPanel(sensorCfg) {
@@ -1513,6 +1537,16 @@ async function fetchWateringLog() {
     const creds = loadWorkerCreds();
     if (!creds.url || !creds.token) return [];
     const r = await fetch(`${creds.url}/watering-log`, { headers: { Authorization: `Bearer ${creds.token}` } });
+    if (!r.ok) return [];
+    return r.json();
+}
+
+async function fetchBatteryLog(serial) {
+    const creds = loadWorkerCreds();
+    if (!creds.url || !creds.token) return [];
+    const r = await fetch(`${creds.url}/battery-log?serial=${encodeURIComponent(serial)}`, {
+        headers: { Authorization: `Bearer ${creds.token}` },
+    });
     if (!r.ok) return [];
     return r.json();
 }
