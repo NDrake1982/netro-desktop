@@ -12,7 +12,7 @@
 //
 // See SETUP.md in this folder for deployment steps.
 
-const VERSION = '0.3.0';
+const VERSION = '0.4.0';
 const NETRO_BASE = 'https://api.netrohome.com/npa/v1';
 
 export default {
@@ -85,7 +85,86 @@ async function handleHttp(request, env) {
         return cors(json(log));
     }
 
+    if (url.pathname === '/pause' && request.method === 'POST') {
+        const { serial, until } = await request.json();
+        const result = await pauseController(env, serial, until);
+        return cors(json(result));
+    }
+
+    if (url.pathname === '/resume' && request.method === 'POST') {
+        const { serial } = await request.json();
+        const result = await resumeController(env, serial);
+        return cors(json(result));
+    }
+
     return cors(json({ error: 'not found' }, 404));
+}
+
+// ---------- Pause / resume ----------
+
+async function pauseController(env, serial, untilIso) {
+    const cfg = await loadConfig(env);
+    const ctrl = cfg.controllers.find(c => c.serial === serial);
+    if (!ctrl) return { ok: false, error: 'controller not found in worker config' };
+    ctrl.paused_until = untilIso;
+    await saveConfig(env, cfg);
+    try {
+        await netroSetStatus(serial, false);
+    } catch (e) {
+        return { ok: true, warn: `paused in config but Netro disable failed: ${e.message}` };
+    }
+    return { ok: true, paused_until: untilIso };
+}
+
+async function resumeController(env, serial) {
+    const cfg = await loadConfig(env);
+    const ctrl = cfg.controllers.find(c => c.serial === serial);
+    if (!ctrl) return { ok: false, error: 'controller not found' };
+    ctrl.paused_until = null;
+    await saveConfig(env, cfg);
+    try {
+        await netroSetStatus(serial, true);
+    } catch (e) {
+        return { ok: true, warn: `resumed in config but Netro enable failed: ${e.message}` };
+    }
+    return { ok: true };
+}
+
+async function resumeExpiredPauses(env) {
+    const cfg = await loadConfig(env);
+    const now = Date.now();
+    const resumed = [];
+    let dirty = false;
+    for (const ctrl of cfg.controllers || []) {
+        if (!ctrl.paused_until) continue;
+        if (new Date(ctrl.paused_until).getTime() > now) continue;
+        ctrl.paused_until = null;
+        dirty = true;
+        try {
+            await netroSetStatus(ctrl.serial, true);
+            resumed.push(ctrl.serial);
+        } catch (e) {
+            resumed.push({ serial: ctrl.serial, warn: e.message });
+        }
+    }
+    if (dirty) await saveConfig(env, cfg);
+    return { resumed };
+}
+
+function isPaused(ctrl, now = new Date()) {
+    if (!ctrl?.paused_until) return false;
+    return new Date(ctrl.paused_until).getTime() > now.getTime();
+}
+
+async function netroSetStatus(serial, enabled) {
+    const r = await fetch(`${NETRO_BASE}/set_status.json`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: serial, status: enabled ? 1 : 0 }),
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const j = await r.json();
+    if (j.status !== 'OK') throw new Error(`Netro: ${(j.errors?.[0]?.message) || j.status}`);
 }
 
 // Watering log — every netroWater call the Worker makes gets a row so the
@@ -181,7 +260,14 @@ async function runDailyCron(env) {
 
     const pushed = [];
     const failed = [];
+    const skipped = [];
     for (const p of placements) {
+        // Don't push patterns to controllers that are still in a pause window.
+        const ctrlCfg = cfg.controllers.find(c => c.serial === p.serial);
+        if (isPaused(ctrlCfg, now)) {
+            skipped.push({ serial: p.serial, zone: p.zone, reason: 'paused' });
+            continue;
+        }
         try {
             await netroWater(p.serial, [p.zone], p.duration_min, p.start_time_iso);
             pushed.push({ serial: p.serial, zone: p.zone, start: p.start_time_iso, duration: p.duration_min });
@@ -198,7 +284,7 @@ async function runDailyCron(env) {
         }
     }
 
-    const result = { ts: now.toISOString(), placed: pushed.length, failed: failed.length, pushed, failed };
+    const result = { ts: now.toISOString(), placed: pushed.length, failed: failed.length, skipped: skipped.length, pushed, failed, skipped_list: skipped };
     cfg.last_run = result;
     await saveConfig(env, cfg);
     return result;
@@ -323,6 +409,10 @@ async function evaluateSensorRules(env) {
                 failed.push({ sensor: sensor.serial, rule: rule.id, error: 'rule has no zones selected' });
                 continue;
             }
+
+            // Skip if controller is paused (its pause window hasn't expired yet).
+            const ctrlCfg = cfg.controllers.find(c => c.serial === rule.action.controller_serial);
+            if (isPaused(ctrlCfg, now)) continue;
 
             // Skip if the rule's controller already has something running — avoid clashing with an active program.
             try {

@@ -1845,8 +1845,10 @@ function renderControllerCard(cfg, info, errorMsg) {
             <div class="controller-actions">
                 <button class="btn-secondary" data-action="stop" data-serial="${cfg.serial}">Stop all</button>
                 <button class="btn-secondary" data-action="skip" data-serial="${cfg.serial}">Skip day…</button>
+                <button class="btn-secondary" data-action="pause" data-serial="${cfg.serial}" data-nickname="${escapeHtml(cfg.nickname || info.name || cfg.serial)}">${cfg.paused_until ? 'Resume' : 'Pause…'}</button>
                 <button class="btn-secondary" data-action="toggle" data-serial="${cfg.serial}" data-enabled="${enabled}">${enabled ? 'Disable' : 'Enable'}</button>
             </div>
+            ${cfg.paused_until ? `<div class="pause-indicator">⏸ Paused until ${new Date(cfg.paused_until).toLocaleString()}</div>` : ''}
         </div>`;
 }
 
@@ -1876,9 +1878,136 @@ async function handleCardAction(e) {
             await netro.setStatus(serial, !wasEnabled);
             toast(wasEnabled ? 'Disabled' : 'Enabled', 'success');
             loadDashboard();
+        } else if (action === 'pause') {
+            const ctrl = config.controllers.find(c => c.serial === serial);
+            if (ctrl?.paused_until) {
+                await resumeControllerOnWorker(serial);
+            } else {
+                openPauseModal(serial, e.currentTarget.dataset.nickname);
+            }
         }
     } catch (err) {
         toast('Error: ' + err.message, 'error');
+    }
+}
+
+// ---------- Pause modal ----------
+let pauseCtx = null;
+
+function openPauseModal(serial, nickname) {
+    pauseCtx = { serial };
+    document.getElementById('pause-modal-title').textContent = `Pause ${nickname}`;
+    // Default custom field to "now + 1h" so it's a valid value if they hit Pause without choosing a preset.
+    const dt = new Date(Date.now() + 60 * 60_000);
+    const pad = n => String(n).padStart(2, '0');
+    document.getElementById('pause-until-custom').value =
+        `${dt.getFullYear()}-${pad(dt.getMonth()+1)}-${pad(dt.getDate())}T${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
+    pauseCtx.until = dt;
+    document.getElementById('pause-modal').hidden = false;
+}
+
+function closePauseModal() {
+    document.getElementById('pause-modal').hidden = true;
+    pauseCtx = null;
+}
+
+function presetToDate(preset) {
+    const now = new Date();
+    if (preset === '1h') return new Date(now.getTime() + 60 * 60_000);
+    if (preset === '3h') return new Date(now.getTime() + 3 * 60 * 60_000);
+    if (preset === '6h') return new Date(now.getTime() + 6 * 60 * 60_000);
+    if (preset === 'midnight') {
+        const d = new Date(now);
+        d.setHours(23, 59, 0, 0);
+        return d;
+    }
+    if (preset === 'tomorrow-6am') {
+        const d = new Date(now);
+        d.setDate(d.getDate() + 1);
+        d.setHours(6, 0, 0, 0);
+        return d;
+    }
+    return null;
+}
+
+document.querySelectorAll('[data-pause-preset]').forEach(btn => {
+    btn.addEventListener('click', () => {
+        if (!pauseCtx) return;
+        const d = presetToDate(btn.dataset.pausePreset);
+        if (!d) return;
+        // Pre-select visually and update the datetime field too.
+        document.querySelectorAll('[data-pause-preset]').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        const pad = n => String(n).padStart(2, '0');
+        document.getElementById('pause-until-custom').value =
+            `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+        pauseCtx.until = d;
+    });
+});
+
+document.getElementById('pause-until-custom').addEventListener('change', (e) => {
+    if (!pauseCtx) return;
+    const d = new Date(e.target.value);
+    if (!isNaN(d)) {
+        pauseCtx.until = d;
+        document.querySelectorAll('[data-pause-preset]').forEach(b => b.classList.remove('active'));
+    }
+});
+
+document.querySelectorAll('[data-close-pause]').forEach(b => b.addEventListener('click', closePauseModal));
+
+document.getElementById('pause-modal').addEventListener('click', (e) => {
+    if (e.target.id === 'pause-modal') closePauseModal();
+});
+
+document.getElementById('pause-confirm').addEventListener('click', async () => {
+    if (!pauseCtx || !pauseCtx.until) { toast('Pick a time', 'error'); return; }
+    const creds = loadWorkerCreds();
+    if (!creds.url || !creds.token) {
+        toast('Connect to the Worker in Automation tab first', 'error');
+        return;
+    }
+    try {
+        const r = await fetch(`${creds.url}/pause`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${creds.token}` },
+            body: JSON.stringify({ serial: pauseCtx.serial, until: pauseCtx.until.toISOString() }),
+        });
+        if (!r.ok) throw new Error(`pause returned ${r.status}`);
+        const result = await r.json();
+        if (!result.ok) throw new Error(result.error || 'pause failed');
+        // Also update the local config cache so the badge appears immediately
+        const ctrl = config.controllers.find(c => c.serial === pauseCtx.serial);
+        if (ctrl) ctrl.paused_until = pauseCtx.until.toISOString();
+        await saveConfig(config);
+        toast(`Paused until ${pauseCtx.until.toLocaleString()}`, 'success');
+        closePauseModal();
+        loadDashboard();
+    } catch (e) {
+        toast('Pause failed: ' + e.message, 'error');
+    }
+});
+
+async function resumeControllerOnWorker(serial) {
+    const creds = loadWorkerCreds();
+    if (!creds.url || !creds.token) {
+        toast('Connect to the Worker first', 'error');
+        return;
+    }
+    try {
+        const r = await fetch(`${creds.url}/resume`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${creds.token}` },
+            body: JSON.stringify({ serial }),
+        });
+        if (!r.ok) throw new Error(`resume returned ${r.status}`);
+        const ctrl = config.controllers.find(c => c.serial === serial);
+        if (ctrl) ctrl.paused_until = null;
+        await saveConfig(config);
+        toast('Resumed', 'success');
+        loadDashboard();
+    } catch (e) {
+        toast('Resume failed: ' + e.message, 'error');
     }
 }
 

@@ -238,6 +238,30 @@ main {
     margin-top: 14px;
     padding-top: 14px;
     border-top: 1px solid var(--border);
+    flex-wrap: wrap;
+}
+
+.pause-indicator {
+    margin-top: 8px;
+    padding: 6px 10px;
+    background: rgba(210,153,34,0.10);
+    border: 1px solid rgba(210,153,34,0.30);
+    border-radius: 6px;
+    color: var(--amber);
+    font-size: 12px;
+}
+
+.pause-presets {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 8px;
+}
+
+.pause-presets .btn-secondary.active {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: rgba(76,194,255,0.10);
 }
 
 /* Savings counter (above status bar) */
