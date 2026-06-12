@@ -12,7 +12,7 @@
 //
 // See SETUP.md in this folder for deployment steps.
 
-const VERSION = '0.6.0';
+const VERSION = '0.7.0';
 const NETRO_BASE = 'https://api.netrohome.com/npa/v1';
 
 export default {
@@ -489,10 +489,14 @@ async function evaluateSensorRules(env) {
             const matched = rule.comparator === '>' ? value > rule.threshold : value < rule.threshold;
             if (!matched) continue;
 
-            // Cooldown check
+            // Cooldown check — count from when the last queued zone FINISHED,
+            // not from the trigger moment. Avoids back-to-back stacking when
+            // total queue duration exceeds the cooldown.
             if (rule.last_triggered_at && rule.cooldown_hours) {
                 const lastMs = new Date(rule.last_triggered_at).getTime();
-                const ageHrs = (now.getTime() - lastMs) / 3_600_000;
+                const queueMs = (rule.last_queue_duration_min || 0) * 60_000;
+                const effectiveEnd = lastMs + queueMs;
+                const ageHrs = (now.getTime() - effectiveEnd) / 3_600_000;
                 if (ageHrs < rule.cooldown_hours) continue;
             }
 
@@ -554,6 +558,7 @@ async function evaluateSensorRules(env) {
 
             if (queued.length) {
                 rule.last_triggered_at = now.toISOString();
+                rule.last_queue_duration_min = queued.length * durationMin;
                 configDirty = true;
                 triggered.push({
                     sensor: sensor.serial,

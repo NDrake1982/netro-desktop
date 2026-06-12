@@ -1183,9 +1183,17 @@ function renderRuleRow(r, i) {
     ).join('');
 
     const enabled = r.enabled !== false;
-    const lastFired = r.last_triggered_at
-        ? `last fired ${formatAgo(r.last_triggered_at)}`
-        : 'never fired';
+    let lastFired = 'never fired';
+    if (r.last_triggered_at) {
+        const lastMs = new Date(r.last_triggered_at).getTime();
+        const queueMs = (r.last_queue_duration_min || 0) * 60_000;
+        const cooldownMs = (r.cooldown_hours || 0) * 3_600_000;
+        const nextEligibleMs = lastMs + queueMs + cooldownMs;
+        const isCoolingDown = nextEligibleMs > Date.now();
+        lastFired = isCoolingDown
+            ? `last fired ${formatAgo(r.last_triggered_at)} · cooldown until ${new Date(nextEligibleMs).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}`
+            : `last fired ${formatAgo(r.last_triggered_at)}`;
+    }
 
     // Backwards-compat: old single-zone rules used `action.zone` (number); new ones use `action.zones` (array).
     const selectedZones = Array.isArray(r.action?.zones)
