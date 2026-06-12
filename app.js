@@ -1060,7 +1060,7 @@ async function loadSensorDetail(serial, days) {
 
     if (batterySeries.length) {
         sensorCharts.push(makeLineChart('battery-chart', batterySeries, {
-            color: '#3fb950', yLabel: '%', yMin: 0, yMax: 100,
+            color: '#3fb950', yLabel: '%', yMin: 0, yMax: 100, xMin, xMax,
             unit: '%', datasetLabel: 'Battery', valueDecimals: 0,
         }));
     } else {
