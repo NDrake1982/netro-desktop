@@ -224,6 +224,30 @@
 
     <div id="toast" class="toast" hidden></div>
 
+    <div id="pause-modal" class="modal" hidden>
+        <div class="modal-content" style="width:380px;">
+            <h3 id="pause-modal-title">Pause controller</h3>
+            <p class="hint" style="margin-top:0;">
+                Disables the controller in Netro until the chosen time. Scheduled programs and sensor-rule triggers will be deferred; rule triggers will re-fire if the sensor is still below threshold after the pause expires.
+            </p>
+            <div class="pause-presets">
+                <button class="btn-secondary" data-pause-preset="1h">1 hour</button>
+                <button class="btn-secondary" data-pause-preset="3h">3 hours</button>
+                <button class="btn-secondary" data-pause-preset="6h">6 hours</button>
+                <button class="btn-secondary" data-pause-preset="midnight">Until midnight</button>
+                <button class="btn-secondary" data-pause-preset="tomorrow-6am">Until 6 am tomorrow</button>
+            </div>
+            <label class="field" style="margin-top:14px;">
+                <span>Or pick a specific time</span>
+                <input id="pause-until-custom" type="datetime-local">
+            </label>
+            <div class="modal-actions">
+                <button class="btn-secondary" data-close-pause>Cancel</button>
+                <button class="btn-primary" id="pause-confirm">Pause</button>
+            </div>
+        </div>
+    </div>
+
     <div id="run-modal" class="modal" hidden>
         <div class="modal-content">
             <h3>Run zone</h3>

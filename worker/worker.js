@@ -24,10 +24,12 @@ export default {
         //   "0 3 * * *"   → daily recurring-pattern push (long-running stagger)
         //   "*/15 * * * *" → sensor-trigger rule evaluation (short, idempotent w/ cooldown)
         const cron = event.cron || '';
-        if (cron.startsWith('*/15')) {
-            ctx.waitUntil(
-                evaluateSensorRules(env).then(r => console.log('sensor-cron:', JSON.stringify(r)))
-            );
+        if (cron.startsWith('*/15') || cron.startsWith('*/5') || cron.startsWith('*/10')) {
+            ctx.waitUntil((async () => {
+                const resumed = await resumeExpiredPauses(env);
+                const rules = await evaluateSensorRules(env);
+                console.log('tick:', JSON.stringify({ resumed, rules }));
+            })());
         } else {
             ctx.waitUntil(
                 runDailyCron(env).then(r => console.log('cron:', JSON.stringify(r)))
