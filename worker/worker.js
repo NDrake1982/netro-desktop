@@ -12,7 +12,9 @@
 //
 // See SETUP.md in this folder for deployment steps.
 
-const VERSION = '0.8.1';
+const VERSION = '0.9.0';
+const RESET_TOKEN_TTL_HOURS = 1;
+const SESSION_TTL_DAYS = 30;
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 const NETRO_BASE = 'https://api.netrohome.com/npa/v1';
 
@@ -49,14 +51,78 @@ async function handleHttp(request, env) {
 
     // Public health check — used by the dashboard to verify the URL before asking for the token.
     if (url.pathname === '/status' && request.method === 'GET') {
+        const userEmail = await env.CONFIG.get('auth_user_email');
         return cors(json({
             ok: true,
             version: VERSION,
             now: new Date().toISOString(),
             has_token: !!env.AUTH_TOKEN,
             has_password: !!(await env.CONFIG.get('auth_password_hash')),
-            username: (await env.CONFIG.get('auth_username')) || null,
+            has_email: !!userEmail,
+            email: userEmail || null,
+            mail_enabled: !!env.RESEND_API_KEY,
         }));
+    }
+
+    if (url.pathname === '/signup' && request.method === 'POST') {
+        // First-time signup — sets the single account's email + password.
+        if (await env.CONFIG.get('auth_user_email')) {
+            return cors(json({ error: 'account already exists — use /login' }, 400));
+        }
+        const { email, password } = await request.json();
+        if (!isValidEmail(email)) return cors(json({ error: 'invalid email' }, 400));
+        if (!password || password.length < 6) {
+            return cors(json({ error: 'password must be at least 6 characters' }, 400));
+        }
+        await env.CONFIG.put('auth_user_email', email.toLowerCase());
+        await env.CONFIG.put('auth_password_hash', await hashPassword(password));
+        const sess = await createSession(env);
+        return cors(json({ ...sess, email: email.toLowerCase() }));
+    }
+
+    if (url.pathname === '/forgot-password' && request.method === 'POST') {
+        const { email } = await request.json();
+        const storedEmail = await env.CONFIG.get('auth_user_email');
+        // Always respond OK to avoid revealing whether an email is registered.
+        if (!storedEmail || storedEmail.toLowerCase() !== (email || '').toLowerCase()) {
+            return cors(json({ ok: true }));
+        }
+        if (!env.RESEND_API_KEY) {
+            return cors(json({ ok: false, error: 'email sending not configured on this Worker (admin: add RESEND_API_KEY secret)' }, 503));
+        }
+        const token = randomToken();
+        const expires_at = Date.now() + RESET_TOKEN_TTL_HOURS * 3_600_000;
+        await env.CONFIG.put(`reset_${token}`, JSON.stringify({ email: storedEmail, expires_at }), {
+            expirationTtl: RESET_TOKEN_TTL_HOURS * 3600,
+        });
+        const baseUrl = env.APP_URL || 'https://netro.hellodrake.com';
+        const resetUrl = `${baseUrl}/?reset=${token}`;
+        try {
+            await sendResetEmail(env, storedEmail, resetUrl);
+        } catch (e) {
+            return cors(json({ ok: false, error: `email send failed: ${e.message}` }, 502));
+        }
+        return cors(json({ ok: true }));
+    }
+
+    if (url.pathname === '/reset-password' && request.method === 'POST') {
+        const { token, password } = await request.json();
+        if (!token || !password || password.length < 6) {
+            return cors(json({ error: 'invalid request' }, 400));
+        }
+        const raw = await env.CONFIG.get(`reset_${token}`);
+        if (!raw) return cors(json({ error: 'reset link expired or invalid' }, 400));
+        const tokenData = JSON.parse(raw);
+        if (tokenData.expires_at < Date.now()) {
+            await env.CONFIG.delete(`reset_${token}`);
+            return cors(json({ error: 'reset link expired' }, 400));
+        }
+        await env.CONFIG.put('auth_password_hash', await hashPassword(password));
+        await env.CONFIG.delete(`reset_${token}`);
+        // Invalidate all existing sessions (the old user might not be you anymore)
+        await env.CONFIG.put('auth_sessions', '[]');
+        const sess = await createSession(env);
+        return cors(json({ ...sess, email: tokenData.email }));
     }
 
     // ---- Auth endpoints (public — they handle their own validation) ----
@@ -78,12 +144,16 @@ async function handleHttp(request, env) {
     if (url.pathname === '/login' && request.method === 'POST') {
         const stored = await env.CONFIG.get('auth_password_hash');
         if (!stored) return cors(json({ error: 'no password set' }, 400));
-        const { password } = await request.json();
+        const { email, password } = await request.json();
+        const storedEmail = await env.CONFIG.get('auth_user_email');
+        if (storedEmail && (!email || email.toLowerCase() !== storedEmail.toLowerCase())) {
+            return cors(json({ error: 'invalid email or password' }, 401));
+        }
         if (!password || !(await verifyPassword(password, stored))) {
-            return cors(json({ error: 'invalid password' }, 401));
+            return cors(json({ error: 'invalid email or password' }, 401));
         }
         const sess = await createSession(env);
-        return cors(json(sess));
+        return cors(json({ ...sess, email: storedEmail }));
     }
 
     if (url.pathname === '/logout' && request.method === 'POST') {
@@ -795,6 +865,48 @@ function toIsoDate(d) {
 function parseTime(s) {
     if (!s) return 0;
     return new Date(s.endsWith('Z') || /[+-]\d{2}:?\d{2}$/.test(s) ? s : s + 'Z').getTime();
+}
+
+// ---------- Email (Resend) ----------
+
+function isValidEmail(s) {
+    return typeof s === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
+}
+
+function randomToken() {
+    const bytes = crypto.getRandomValues(new Uint8Array(24));
+    return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function sendResetEmail(env, to, resetUrl) {
+    const from = env.MAIL_FROM || 'NetroDesktop <onboarding@resend.dev>';
+    const html = `
+        <div style="font-family: system-ui, sans-serif; max-width: 480px; margin: 0 auto; padding: 24px;">
+            <h2 style="margin:0 0 16px;">Reset your NetroDesktop password</h2>
+            <p>Someone (hopefully you) asked to reset your password. This link is valid for ${RESET_TOKEN_TTL_HOURS} hour:</p>
+            <p style="margin: 24px 0;">
+                <a href="${resetUrl}" style="background:#4cc2ff; color:#0a1419; padding:10px 18px; border-radius:6px; text-decoration:none; font-weight:600;">Reset password</a>
+            </p>
+            <p style="font-size:12px; color:#888;">Or paste this URL in your browser:<br><code style="word-break: break-all;">${resetUrl}</code></p>
+            <p style="font-size:12px; color:#888; margin-top: 24px;">If you didn't request this, you can safely ignore this email — your password hasn't changed.</p>
+        </div>`;
+    const r = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${env.RESEND_API_KEY}`,
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            from,
+            to: [to],
+            subject: 'Reset your NetroDesktop password',
+            html,
+        }),
+    });
+    if (!r.ok) {
+        const errText = await r.text();
+        throw new Error(`Resend ${r.status}: ${errText.slice(0, 200)}`);
+    }
 }
 
 // ---------- Netro API ----------
