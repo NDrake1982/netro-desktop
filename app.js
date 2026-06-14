@@ -1222,9 +1222,7 @@ function renderRuleRow(r, i) {
             <div class="rule-then">
                 <span class="rule-label">then run on</span>
                 <select class="r-controller">${controllerOpts}</select>
-                <span class="rule-label">for</span>
-                <input class="r-duration" type="number" min="1" max="240" value="${r.action?.duration_min ?? 10}" style="width:60px;">
-                <span class="rule-label">min each · cooldown</span>
+                <span class="rule-label">· cooldown</span>
                 <input class="r-cooldown" type="number" min="0" max="168" value="${r.cooldown_hours ?? 12}" style="width:60px;">
                 <span class="rule-label">h</span>
             </div>
@@ -1352,7 +1350,9 @@ function captureRulesToConfig(serial) {
             action: {
                 controller_serial: row.querySelector('.r-controller').value,
                 zones: checkedZones,
-                duration_min: parseInt(row.querySelector('.r-duration').value) || 10,
+                // Default for newly-checked chips. Kept in config for backwards compat
+                // and as a fallback when zone_durations[zone] is missing.
+                duration_min: 10,
                 zone_durations: zoneDurations,
             },
             cooldown_hours: parseFloat(row.querySelector('.r-cooldown').value) || 0,
