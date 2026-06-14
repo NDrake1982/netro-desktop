@@ -12,7 +12,7 @@
 //
 // See SETUP.md in this folder for deployment steps.
 
-const VERSION = '0.8.0';
+const VERSION = '0.8.1';
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 const NETRO_BASE = 'https://api.netrohome.com/npa/v1';
 
@@ -55,6 +55,7 @@ async function handleHttp(request, env) {
             now: new Date().toISOString(),
             has_token: !!env.AUTH_TOKEN,
             has_password: !!(await env.CONFIG.get('auth_password_hash')),
+            username: (await env.CONFIG.get('auth_username')) || null,
         }));
     }
 
@@ -64,13 +65,14 @@ async function handleHttp(request, env) {
         if (await env.CONFIG.get('auth_password_hash')) {
             return cors(json({ error: 'password already set — use /login' }, 400));
         }
-        const { password } = await request.json();
+        const { password, username } = await request.json();
         if (!password || password.length < 6) {
             return cors(json({ error: 'password must be at least 6 characters' }, 400));
         }
         await env.CONFIG.put('auth_password_hash', await hashPassword(password));
+        if (username) await env.CONFIG.put('auth_username', username);
         const sess = await createSession(env);
-        return cors(json(sess));
+        return cors(json({ ...sess, username: username || null }));
     }
 
     if (url.pathname === '/login' && request.method === 'POST') {
