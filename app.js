@@ -1201,6 +1201,8 @@ function renderRuleRow(r, i) {
     const selectedZones = Array.isArray(r.action?.zones)
         ? r.action.zones
         : (r.action?.zone ? [r.action.zone] : []);
+    const zoneDurations = r.action?.zone_durations || {};
+    const defaultDuration = r.action?.duration_min ?? 10;
 
     return `
         <div class="rule-row ${enabled ? '' : 'disabled'}" data-i="${i}">
@@ -1227,9 +1229,9 @@ function renderRuleRow(r, i) {
                 <span class="rule-label">h</span>
             </div>
             <div class="rule-zones-wrap">
-                <span class="rule-label">Zones (run sequentially, back-to-back):</span>
+                <span class="rule-label">Zones (run sequentially, back-to-back) — each has its own duration:</span>
                 <div class="rule-zones" data-selected='${JSON.stringify(selectedZones)}'>
-                    ${renderRuleZoneCheckboxes(r.action?.controller_serial, selectedZones)}
+                    ${renderRuleZoneCheckboxes(r.action?.controller_serial, selectedZones, zoneDurations, defaultDuration)}
                 </div>
             </div>
             <div class="rule-meta">
@@ -1243,7 +1245,7 @@ function renderRuleRow(r, i) {
         </div>`;
 }
 
-function renderRuleZoneCheckboxes(controllerSerial, selectedZones) {
+function renderRuleZoneCheckboxes(controllerSerial, selectedZones, zoneDurations = {}, defaultDuration = 10) {
     const info = dashboardControllerInfos.get(controllerSerial);
     if (!info?.zones) {
         return `<span class="hint" style="margin:0;">Pick a controller above to see its zones.</span>`;
@@ -1253,12 +1255,17 @@ function renderRuleZoneCheckboxes(controllerSerial, selectedZones) {
         return `<span class="hint" style="margin:0;">No active zones on this controller.</span>`;
     }
     const sel = new Set(selectedZones || []);
-    return activeZones.map(z => `
+    return activeZones.map(z => {
+        const dur = zoneDurations[z.ith] ?? zoneDurations[String(z.ith)] ?? defaultDuration;
+        return `
         <label class="zone-chip">
             <input type="checkbox" data-zone="${z.ith}" ${sel.has(z.ith) ? 'checked' : ''}>
-            <span>${z.ith} · ${escapeHtml(z.name)}</span>
-        </label>
-    `).join('');
+            <span class="zone-chip-label">${z.ith} · ${escapeHtml(z.name)}</span>
+            <span class="zone-chip-duration">
+                · <input type="number" class="zone-chip-duration-input" data-zone="${z.ith}" min="1" max="240" value="${dur}" title="Duration in minutes for this zone"> min
+            </span>
+        </label>`;
+    }).join('');
 }
 
 function wireRulesPanel(serial) {
@@ -1327,6 +1334,15 @@ function captureRulesToConfig(serial) {
         const checkedZones = [...row.querySelectorAll('.rule-zones input[type="checkbox"]:checked')]
             .map(cb => parseInt(cb.dataset.zone))
             .filter(n => !isNaN(n));
+        // Per-zone duration overrides: capture the duration input next to each CHECKED chip.
+        const zoneDurations = {};
+        for (const cb of row.querySelectorAll('.rule-zones input[type="checkbox"]:checked')) {
+            const z = parseInt(cb.dataset.zone);
+            if (isNaN(z)) continue;
+            const durInput = cb.parentElement?.querySelector('.zone-chip-duration-input');
+            const d = parseInt(durInput?.value);
+            if (!isNaN(d) && d > 0) zoneDurations[z] = d;
+        }
         return {
             id: existing.id || (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2)),
             enabled: row.querySelector('.r-enabled').checked,
@@ -1337,6 +1353,7 @@ function captureRulesToConfig(serial) {
                 controller_serial: row.querySelector('.r-controller').value,
                 zones: checkedZones,
                 duration_min: parseInt(row.querySelector('.r-duration').value) || 10,
+                zone_durations: zoneDurations,
             },
             cooldown_hours: parseFloat(row.querySelector('.r-cooldown').value) || 0,
             last_triggered_at: existing.last_triggered_at || null,

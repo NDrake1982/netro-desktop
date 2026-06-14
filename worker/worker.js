@@ -12,7 +12,7 @@
 //
 // See SETUP.md in this folder for deployment steps.
 
-const VERSION = '0.9.0';
+const VERSION = '0.10.0';
 const RESET_TOKEN_TTL_HOURS = 1;
 const SESSION_TTL_DAYS = 30;
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
@@ -733,7 +733,7 @@ async function evaluateSensorRules(env) {
 
             if (queued.length) {
                 rule.last_triggered_at = now.toISOString();
-                rule.last_queue_duration_min = queued.length * durationMin;
+                rule.last_queue_duration_min = totalDurationMin;
                 configDirty = true;
                 triggered.push({
                     sensor: sensor.serial,
