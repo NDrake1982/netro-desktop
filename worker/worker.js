@@ -703,31 +703,38 @@ async function evaluateSensorRules(env) {
             //   zone[1+] → start_time set to end-of-previous-zone, queued by Netro
             // Sending start_time=now for zone[0] would let Netro bump it to the
             // next hour slot (their docs require start_time strictly in the future).
-            const durationMin = rule.action.duration_min || 10;
+            // Per-zone duration: rule.action.zone_durations[zone] overrides duration_min.
+            const defaultDuration = rule.action.duration_min || 10;
+            const zoneDurations = rule.action.zone_durations || {};
             const queued = [];
             const stackFailures = [];
+            let cursorMs = now.getTime();
+            let totalDurationMin = 0;
             for (let zi = 0; zi < zones.length; zi++) {
+                const z = zones[zi];
+                const dur = zoneDurations[z] ?? zoneDurations[String(z)] ?? defaultDuration;
                 let startIso = null;
                 if (zi > 0) {
-                    const startMs = now.getTime() + zi * durationMin * 60_000;
-                    startIso = new Date(startMs).toISOString().replace(/\.\d+Z$/, 'Z');
+                    startIso = new Date(cursorMs).toISOString().replace(/\.\d+Z$/, 'Z');
                 }
                 try {
-                    await netroWater(rule.action.controller_serial, [zones[zi]], durationMin, startIso);
-                    queued.push({ zone: zones[zi], start: startIso || 'immediate' });
+                    await netroWater(rule.action.controller_serial, [z], dur, startIso);
+                    queued.push({ zone: z, start: startIso || 'immediate', duration_min: dur });
                     await appendWateringLog(env, {
                         origin: 'sensor-rule',
                         serial: rule.action.controller_serial,
-                        zone: zones[zi],
+                        zone: z,
                         start_time: startIso,
-                        duration_min: durationMin,
+                        duration_min: dur,
                         sensor_serial: sensor.serial,
                         rule_id: rule.id,
                         metric: rule.metric,
                         reading_value: value,
                     });
+                    totalDurationMin += dur;
+                    cursorMs += dur * 60_000;
                 } catch (e) {
-                    stackFailures.push({ zone: zones[zi], error: e.message });
+                    stackFailures.push({ zone: z, error: e.message });
                 }
             }
 
