@@ -12,7 +12,8 @@
 //
 // See SETUP.md in this folder for deployment steps.
 
-const VERSION = '0.7.0';
+const VERSION = '0.8.0';
+const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 const NETRO_BASE = 'https://api.netrohome.com/npa/v1';
 
 export default {
@@ -53,12 +54,45 @@ async function handleHttp(request, env) {
             version: VERSION,
             now: new Date().toISOString(),
             has_token: !!env.AUTH_TOKEN,
+            has_password: !!(await env.CONFIG.get('auth_password_hash')),
         }));
     }
 
-    // Everything else requires the Bearer token.
-    const auth = request.headers.get('Authorization');
-    if (!env.AUTH_TOKEN || auth !== `Bearer ${env.AUTH_TOKEN}`) {
+    // ---- Auth endpoints (public — they handle their own validation) ----
+
+    if (url.pathname === '/auth-setup' && request.method === 'POST') {
+        if (await env.CONFIG.get('auth_password_hash')) {
+            return cors(json({ error: 'password already set — use /login' }, 400));
+        }
+        const { password } = await request.json();
+        if (!password || password.length < 6) {
+            return cors(json({ error: 'password must be at least 6 characters' }, 400));
+        }
+        await env.CONFIG.put('auth_password_hash', await hashPassword(password));
+        const sess = await createSession(env);
+        return cors(json(sess));
+    }
+
+    if (url.pathname === '/login' && request.method === 'POST') {
+        const stored = await env.CONFIG.get('auth_password_hash');
+        if (!stored) return cors(json({ error: 'no password set' }, 400));
+        const { password } = await request.json();
+        if (!password || !(await verifyPassword(password, stored))) {
+            return cors(json({ error: 'invalid password' }, 401));
+        }
+        const sess = await createSession(env);
+        return cors(json(sess));
+    }
+
+    if (url.pathname === '/logout' && request.method === 'POST') {
+        const token = (request.headers.get('Authorization') || '').replace(/^Bearer\s+/, '');
+        if (token) await invalidateSession(env, token);
+        return cors(json({ ok: true }));
+    }
+
+    // ---- All other endpoints require either a valid session OR the legacy AUTH_TOKEN ----
+
+    if (!(await isAuthorized(request, env))) {
         return cors(json({ error: 'unauthorized' }, 401));
     }
 
@@ -249,6 +283,75 @@ async function replayMissedSchedules(env, serial) {
 function isPaused(ctrl, now = new Date()) {
     if (!ctrl?.paused_until) return false;
     return new Date(ctrl.paused_until).getTime() > now.getTime();
+}
+
+// ---------- Auth ----------
+
+async function isAuthorized(request, env) {
+    const auth = request.headers.get('Authorization');
+    if (!auth || !auth.startsWith('Bearer ')) return false;
+    const token = auth.slice(7);
+    // Legacy admin token still works (for recovery / scripts)
+    if (env.AUTH_TOKEN && token === env.AUTH_TOKEN) return true;
+    // Session token lookup
+    const raw = await env.CONFIG.get('auth_sessions');
+    if (!raw) return false;
+    let sessions;
+    try { sessions = JSON.parse(raw); } catch { return false; }
+    const now = Date.now();
+    return sessions.some(s => s.token === token && s.expires_at > now);
+}
+
+async function hashPassword(password, saltHex = null) {
+    if (!saltHex) {
+        const saltBytes = crypto.getRandomValues(new Uint8Array(16));
+        saltHex = Array.from(saltBytes).map(b => b.toString(16).padStart(2, '0')).join('');
+    }
+    const saltBytes = new Uint8Array(saltHex.match(/.{2}/g).map(b => parseInt(b, 16)));
+    const keyMaterial = await crypto.subtle.importKey(
+        'raw', new TextEncoder().encode(password), { name: 'PBKDF2' }, false, ['deriveBits']
+    );
+    const bits = await crypto.subtle.deriveBits(
+        { name: 'PBKDF2', salt: saltBytes, iterations: 100000, hash: 'SHA-256' },
+        keyMaterial, 256
+    );
+    const hashHex = Array.from(new Uint8Array(bits)).map(b => b.toString(16).padStart(2, '0')).join('');
+    return `${saltHex}:${hashHex}`;
+}
+
+async function verifyPassword(password, stored) {
+    const [saltHex] = stored.split(':');
+    const check = await hashPassword(password, saltHex);
+    // Constant-time-ish compare
+    if (check.length !== stored.length) return false;
+    let diff = 0;
+    for (let i = 0; i < check.length; i++) diff |= check.charCodeAt(i) ^ stored.charCodeAt(i);
+    return diff === 0;
+}
+
+async function createSession(env) {
+    const tokenBytes = crypto.getRandomValues(new Uint8Array(32));
+    const token = Array.from(tokenBytes).map(b => b.toString(16).padStart(2, '0')).join('');
+    const expires_at = Date.now() + SESSION_TTL_MS;
+    const raw = await env.CONFIG.get('auth_sessions');
+    let sessions = [];
+    try { sessions = raw ? JSON.parse(raw) : []; } catch {}
+    const now = Date.now();
+    sessions = sessions.filter(s => s.expires_at > now);
+    sessions.push({ token, expires_at, created_at: now });
+    // Cap at 50 active sessions to keep KV value small
+    sessions = sessions.slice(-50);
+    await env.CONFIG.put('auth_sessions', JSON.stringify(sessions));
+    return { token, expires_at };
+}
+
+async function invalidateSession(env, token) {
+    const raw = await env.CONFIG.get('auth_sessions');
+    if (!raw) return;
+    let sessions;
+    try { sessions = JSON.parse(raw); } catch { return; }
+    sessions = sessions.filter(s => s.token !== token);
+    await env.CONFIG.put('auth_sessions', JSON.stringify(sessions));
 }
 
 async function netroSetStatus(serial, enabled) {
