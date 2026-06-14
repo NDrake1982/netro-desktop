@@ -19,13 +19,13 @@
             <h2 id="login-title" style="margin: 0 0 8px; font-size: 18px;">Sign in</h2>
             <p id="login-subtitle" class="hint" style="margin: 0 0 20px;">Enter your password to continue.</p>
             <form id="login-form">
-                <label class="field" id="login-username-wrap">
-                    <span>Username</span>
-                    <input id="login-username" type="text" placeholder="e.g. nick" autocomplete="username">
+                <label class="field" id="login-email-wrap">
+                    <span>Email</span>
+                    <input id="login-email" type="email" placeholder="you@example.com" autocomplete="email" required>
                 </label>
-                <label class="field">
+                <label class="field" id="login-password-wrap">
                     <span>Password</span>
-                    <input id="login-password" type="password" placeholder="••••••••" required minlength="6" autocomplete="current-password">
+                    <input id="login-password" type="password" placeholder="••••••••" minlength="6" autocomplete="current-password">
                 </label>
                 <label class="field" id="login-password-confirm-wrap" hidden>
                     <span>Confirm password</span>
@@ -33,6 +33,11 @@
                 </label>
                 <button type="submit" class="btn-primary" id="login-submit" style="width: 100%; padding: 10px;">Sign in</button>
                 <p id="login-error" class="hint" style="color: var(--red); margin-top: 10px; min-height: 18px;"></p>
+                <p id="login-info" class="hint" style="color: var(--green); margin-top: 4px; min-height: 18px;"></p>
+                <div style="display:flex; justify-content:space-between; margin-top:8px;">
+                    <a href="#" id="login-forgot-link" class="hint" style="cursor:pointer;">Forgot password?</a>
+                    <a href="#" id="login-back-link" class="hint" style="cursor:pointer;" hidden>← Back to sign in</a>
+                </div>
                 <details id="login-advanced" style="margin-top: 14px;">
                     <summary class="hint" style="cursor: pointer; user-select: none;">Advanced — change Worker URL</summary>
                     <label class="field" style="margin-top: 10px;">

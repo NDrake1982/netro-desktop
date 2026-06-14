@@ -2369,22 +2369,58 @@ const loginPasswordInput = document.getElementById('login-password');
 const loginConfirmWrap = document.getElementById('login-password-confirm-wrap');
 const loginConfirmInput = document.getElementById('login-password-confirm');
 
-function showLogin(mode) {
-    if (mode === 'setup') {
-        loginTitle.textContent = 'First-time setup';
-        loginSubtitle.textContent = 'Create a password — you\'ll use this on every device.';
-        loginSubmitBtn.textContent = 'Create password';
+function showLogin(mode, opts = {}) {
+    const emailWrap = document.getElementById('login-email-wrap');
+    const passwordWrap = document.getElementById('login-password-wrap');
+    const forgotLink = document.getElementById('login-forgot-link');
+    const backLink = document.getElementById('login-back-link');
+    const infoEl = document.getElementById('login-info');
+    infoEl.textContent = '';
+    loginErrorEl.textContent = '';
+    loginGate.dataset.mode = mode;
+
+    if (mode === 'signup') {
+        loginTitle.textContent = 'Create your account';
+        loginSubtitle.textContent = 'Sign up with email + password.';
+        loginSubmitBtn.textContent = 'Create account';
+        emailWrap.hidden = false;
+        passwordWrap.hidden = false;
         loginConfirmWrap.hidden = false;
         loginPasswordInput.autocomplete = 'new-password';
+        forgotLink.hidden = true;
+        backLink.hidden = true;
+    } else if (mode === 'forgot') {
+        loginTitle.textContent = 'Forgot password';
+        loginSubtitle.textContent = 'Enter your email and we\'ll send you a reset link.';
+        loginSubmitBtn.textContent = 'Send reset link';
+        emailWrap.hidden = false;
+        passwordWrap.hidden = true;
+        loginConfirmWrap.hidden = true;
+        forgotLink.hidden = true;
+        backLink.hidden = false;
+    } else if (mode === 'reset') {
+        loginTitle.textContent = 'Set a new password';
+        loginSubtitle.textContent = 'Enter the new password for your account.';
+        loginSubmitBtn.textContent = 'Set password';
+        emailWrap.hidden = true;
+        passwordWrap.hidden = false;
+        loginConfirmWrap.hidden = false;
+        loginPasswordInput.autocomplete = 'new-password';
+        forgotLink.hidden = true;
+        backLink.hidden = false;
     } else {
         loginTitle.textContent = 'Sign in';
-        loginSubtitle.textContent = 'Enter your password to continue.';
+        loginSubtitle.textContent = 'Enter your email and password to continue.';
         loginSubmitBtn.textContent = 'Sign in';
+        emailWrap.hidden = false;
+        passwordWrap.hidden = false;
         loginConfirmWrap.hidden = true;
         loginPasswordInput.autocomplete = 'current-password';
+        forgotLink.hidden = false;
+        backLink.hidden = true;
     }
     loginGate.hidden = false;
-    loginPasswordInput.focus();
+    (mode === 'reset' ? loginPasswordInput : document.getElementById('login-email')).focus();
 }
 
 function hideLogin() {
@@ -2422,10 +2458,25 @@ loginForm.addEventListener('submit', async (e) => {
     loginSubmitBtn.disabled = true;
     loginSubmitBtn.textContent = isSetup ? 'Creating…' : 'Signing in…';
     try {
-        const endpoint = isSetup ? '/auth-setup' : '/login';
-        const usernameInput = document.getElementById('login-username');
-        const username = usernameInput ? usernameInput.value.trim() : '';
-        const body = isSetup ? { password, username } : { password };
+        const mode = loginGate.dataset.mode;
+        const emailInput = document.getElementById('login-email');
+        const email = (emailInput?.value || '').trim().toLowerCase();
+        const infoEl = document.getElementById('login-info');
+        let endpoint, body;
+        if (mode === 'signup') {
+            endpoint = '/signup';
+            body = { email, password };
+        } else if (mode === 'forgot') {
+            endpoint = '/forgot-password';
+            body = { email };
+        } else if (mode === 'reset') {
+            const params = new URLSearchParams(location.search);
+            endpoint = '/reset-password';
+            body = { token: params.get('reset'), password };
+        } else {
+            endpoint = '/login';
+            body = { email, password };
+        }
         const r = await fetch(`${url}${endpoint}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
