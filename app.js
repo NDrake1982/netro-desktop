@@ -2520,10 +2520,10 @@ async function bootDashboard() {
     }
     try {
         const status = await checkAuthStatus();
-        showLogin(status.has_password ? 'login' : 'setup');
+        showLogin(status.has_password ? 'signin' : 'signup');
     } catch (e) {
         // Can't reach the Worker — surface the login screen anyway so the user can adjust URL.
-        showLogin('login');
+        showLogin('signin');
         loginErrorEl.textContent = 'Could not reach Worker: ' + e.message;
     }
     // Old-style boot (no login) — only reached if we ever want to support no-Worker mode again.
