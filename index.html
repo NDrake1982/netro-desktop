@@ -19,9 +19,9 @@
             <h2 id="login-title" style="margin: 0 0 8px; font-size: 18px;">Sign in</h2>
             <p id="login-subtitle" class="hint" style="margin: 0 0 20px;">Enter your password to continue.</p>
             <form id="login-form">
-                <label class="field">
-                    <span>Worker URL</span>
-                    <input id="login-worker-url" type="url" placeholder="https://your-worker.workers.dev" required>
+                <label class="field" id="login-username-wrap">
+                    <span>Username</span>
+                    <input id="login-username" type="text" placeholder="e.g. nick" autocomplete="username">
                 </label>
                 <label class="field">
                     <span>Password</span>
@@ -33,6 +33,13 @@
                 </label>
                 <button type="submit" class="btn-primary" id="login-submit" style="width: 100%; padding: 10px;">Sign in</button>
                 <p id="login-error" class="hint" style="color: var(--red); margin-top: 10px; min-height: 18px;"></p>
+                <details id="login-advanced" style="margin-top: 14px;">
+                    <summary class="hint" style="cursor: pointer; user-select: none;">Advanced — change Worker URL</summary>
+                    <label class="field" style="margin-top: 10px;">
+                        <span>Worker URL</span>
+                        <input id="login-worker-url" type="url" placeholder="https://your-worker.workers.dev">
+                    </label>
+                </details>
             </form>
         </div>
     </div>
