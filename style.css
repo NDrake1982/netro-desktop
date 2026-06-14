@@ -38,6 +38,28 @@ code {
     font-size: 12px;
 }
 
+/* Login gate */
+.login-gate {
+    position: fixed;
+    inset: 0;
+    background: var(--bg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    padding: 20px;
+}
+
+.login-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 28px 32px;
+    box-shadow: var(--shadow);
+    width: 100%;
+    max-width: 420px;
+}
+
 /* Topbar */
 .topbar {
     display: flex;

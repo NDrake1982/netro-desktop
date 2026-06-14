@@ -3,6 +3,8 @@ import {
     loadConfig, saveConfig, hasController, hasSensor, defaultConfig,
     loadWorkerCreds, saveWorkerCreds, hasWorkerCreds,
     fetchFromWorker, pushToWorker,
+    DEFAULT_WORKER_URL,
+    loadSession, saveSession, clearSession, hasValidSession,
 } from './config.js';
 
 // Netro returns timestamps as bare ISO strings without a timezone marker
@@ -2355,9 +2357,124 @@ function escapeHtml(s) {
         .replaceAll("'", '&#39;');
 }
 
+// ---------- Login flow ----------
+const loginGate = document.getElementById('login-gate');
+const loginForm = document.getElementById('login-form');
+const loginErrorEl = document.getElementById('login-error');
+const loginSubmitBtn = document.getElementById('login-submit');
+const loginTitle = document.getElementById('login-title');
+const loginSubtitle = document.getElementById('login-subtitle');
+const loginUrlInput = document.getElementById('login-worker-url');
+const loginPasswordInput = document.getElementById('login-password');
+const loginConfirmWrap = document.getElementById('login-password-confirm-wrap');
+const loginConfirmInput = document.getElementById('login-password-confirm');
+
+function showLogin(mode) {
+    if (mode === 'setup') {
+        loginTitle.textContent = 'First-time setup';
+        loginSubtitle.textContent = 'Create a password — you\'ll use this on every device.';
+        loginSubmitBtn.textContent = 'Create password';
+        loginConfirmWrap.hidden = false;
+        loginPasswordInput.autocomplete = 'new-password';
+    } else {
+        loginTitle.textContent = 'Sign in';
+        loginSubtitle.textContent = 'Enter your password to continue.';
+        loginSubmitBtn.textContent = 'Sign in';
+        loginConfirmWrap.hidden = true;
+        loginPasswordInput.autocomplete = 'current-password';
+    }
+    loginGate.hidden = false;
+    loginPasswordInput.focus();
+}
+
+function hideLogin() {
+    loginGate.hidden = true;
+    loginPasswordInput.value = '';
+    loginConfirmInput.value = '';
+    loginErrorEl.textContent = '';
+}
+
+async function checkAuthStatus() {
+    const url = (loadWorkerCreds().url || DEFAULT_WORKER_URL).replace(/\/$/, '');
+    loginUrlInput.value = url;
+    const r = await fetch(`${url}/status`);
+    if (!r.ok) throw new Error(`Worker /status returned ${r.status}`);
+    return { url, ...(await r.json()) };
+}
+
+loginForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    loginErrorEl.textContent = '';
+    const url = loginUrlInput.value.trim().replace(/\/$/, '');
+    const password = loginPasswordInput.value;
+    const confirm = loginConfirmInput.value;
+    const isSetup = !loginConfirmWrap.hidden;
+
+    if (isSetup && password !== confirm) {
+        loginErrorEl.textContent = 'Passwords don\'t match';
+        return;
+    }
+    if (password.length < 6) {
+        loginErrorEl.textContent = 'Password must be at least 6 characters';
+        return;
+    }
+
+    loginSubmitBtn.disabled = true;
+    loginSubmitBtn.textContent = isSetup ? 'Creating…' : 'Signing in…';
+    try {
+        const endpoint = isSetup ? '/auth-setup' : '/login';
+        const r = await fetch(`${url}${endpoint}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password }),
+        });
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.error || `${r.status}`);
+        saveSession({ token: data.token, expires_at: data.expires_at });
+        // Save the URL too so subsequent API calls find it without prompting.
+        saveWorkerCreds({ url, token: data.token });
+        hideLogin();
+        await bootDashboard();
+    } catch (err) {
+        loginErrorEl.textContent = err.message || 'Login failed';
+    } finally {
+        loginSubmitBtn.disabled = false;
+        loginSubmitBtn.textContent = isSetup ? 'Create password' : 'Sign in';
+    }
+});
+
+async function bootDashboard() {
+    await initConfig();
+    const m = location.hash.match(/^#sensor=([0-9a-f]+)$/i);
+    if (m && hasController(config)) {
+        loadDashboard();
+        openSensorDetail(m[1]);
+    } else if (!hasController(config)) {
+        switchTab('settings');
+        loadDashboard();
+    } else {
+        loadDashboard();
+    }
+}
+
 // ---------- Init ----------
 (async () => {
-    await initConfig();
+    if (hasValidSession()) {
+        // Existing session — just boot the dashboard.
+        await bootDashboard();
+        return;
+    }
+    try {
+        const status = await checkAuthStatus();
+        showLogin(status.has_password ? 'login' : 'setup');
+    } catch (e) {
+        // Can't reach the Worker — surface the login screen anyway so the user can adjust URL.
+        showLogin('login');
+        loginErrorEl.textContent = 'Could not reach Worker: ' + e.message;
+    }
+    // Old-style boot (no login) — only reached if we ever want to support no-Worker mode again.
+    return;
+    // eslint-disable-next-line no-unreachable
     // Honour a sensor deep link if the user opened the URL with #sensor=…
     const m = location.hash.match(/^#sensor=([0-9a-f]+)$/i);
     if (m && hasController(config)) {

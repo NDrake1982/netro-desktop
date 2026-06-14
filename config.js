@@ -5,6 +5,10 @@
 
 const STORAGE_KEY = 'netro-desktop-config-v1';
 const WORKER_STORE = 'netro-desktop-worker-v1';
+const SESSION_STORE = 'netro-desktop-session-v1';
+
+// Default Worker URL — overridable from the login form if you ever rehost.
+export const DEFAULT_WORKER_URL = 'https://netro-desktop-worker.nicholas-drake10.workers.dev';
 
 export function defaultConfig() {
     return {
@@ -55,6 +59,33 @@ export function saveWorkerCreds(creds) {
 export function hasWorkerCreds() {
     const c = loadWorkerCreds();
     return !!(c.url && c.token);
+}
+
+// --- Session (login) helpers ---
+
+export function loadSession() {
+    const raw = localStorage.getItem(SESSION_STORE);
+    if (!raw) return null;
+    try {
+        const s = JSON.parse(raw);
+        if (s.expires_at && s.expires_at < Date.now()) {
+            localStorage.removeItem(SESSION_STORE);
+            return null;
+        }
+        return s;
+    } catch { return null; }
+}
+
+export function saveSession(session) {
+    localStorage.setItem(SESSION_STORE, JSON.stringify(session));
+}
+
+export function clearSession() {
+    localStorage.removeItem(SESSION_STORE);
+}
+
+export function hasValidSession() {
+    return !!loadSession();
 }
 
 // --- Cloud (Worker) read/write ---
