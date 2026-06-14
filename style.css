@@ -50,6 +50,8 @@ code {
     padding: 20px;
 }
 
+.login-gate[hidden] { display: none; }
+
 .login-card {
     background: var(--bg-card);
     border: 1px solid var(--border);
