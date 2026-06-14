@@ -2374,6 +2374,7 @@ function showLogin(mode, opts = {}) {
     const passwordWrap = document.getElementById('login-password-wrap');
     const forgotLink = document.getElementById('login-forgot-link');
     const backLink = document.getElementById('login-back-link');
+    const signupLink = document.getElementById('login-signup-link');
     const infoEl = document.getElementById('login-info');
     infoEl.textContent = '';
     loginErrorEl.textContent = '';
@@ -2389,6 +2390,7 @@ function showLogin(mode, opts = {}) {
         loginPasswordInput.autocomplete = 'new-password';
         forgotLink.hidden = true;
         backLink.hidden = true;
+        if (signupLink) signupLink.hidden = true;
     } else if (mode === 'forgot') {
         loginTitle.textContent = 'Forgot password';
         loginSubtitle.textContent = 'Enter your email and we\'ll send you a reset link.';
@@ -2418,6 +2420,7 @@ function showLogin(mode, opts = {}) {
         loginPasswordInput.autocomplete = 'current-password';
         forgotLink.hidden = false;
         backLink.hidden = true;
+        if (signupLink) signupLink.hidden = false;
     }
     loginGate.hidden = false;
     (mode === 'reset' ? loginPasswordInput : document.getElementById('login-email')).focus();
@@ -2510,6 +2513,20 @@ async function bootDashboard() {
         loadDashboard();
     }
 }
+
+// ---------- Wire login mode-switch links ----------
+document.getElementById('login-forgot-link')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    showLogin('forgot');
+});
+document.getElementById('login-back-link')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    showLogin('signin');
+});
+document.getElementById('login-signup-link')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    showLogin('signup');
+});
 
 // ---------- Init ----------
 (async () => {
