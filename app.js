@@ -2405,7 +2405,7 @@ async function checkAuthStatus() {
 loginForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     loginErrorEl.textContent = '';
-    const url = loginUrlInput.value.trim().replace(/\/$/, '');
+    const url = (loginUrlInput.value.trim() || DEFAULT_WORKER_URL).replace(/\/$/, '');
     const password = loginPasswordInput.value;
     const confirm = loginConfirmInput.value;
     const isSetup = !loginConfirmWrap.hidden;
@@ -2423,10 +2423,13 @@ loginForm.addEventListener('submit', async (e) => {
     loginSubmitBtn.textContent = isSetup ? 'Creating…' : 'Signing in…';
     try {
         const endpoint = isSetup ? '/auth-setup' : '/login';
+        const usernameInput = document.getElementById('login-username');
+        const username = usernameInput ? usernameInput.value.trim() : '';
+        const body = isSetup ? { password, username } : { password };
         const r = await fetch(`${url}${endpoint}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ password }),
+            body: JSON.stringify(body),
         });
         const data = await r.json();
         if (!r.ok) throw new Error(data.error || `${r.status}`);
