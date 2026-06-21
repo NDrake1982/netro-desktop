@@ -1,0 +1,19 @@
+{
+    "name": "NetroDesktop",
+    "short_name": "Netro",
+    "description": "Coordinate Netro irrigation controllers around a shared borehole",
+    "start_url": "/",
+    "scope": "/",
+    "display": "standalone",
+    "orientation": "any",
+    "background_color": "#0f1419",
+    "theme_color": "#0f1419",
+    "icons": [
+        {
+            "src": "/icon.svg",
+            "sizes": "any",
+            "type": "image/svg+xml",
+            "purpose": "any maskable"
+        }
+    ]
+}
