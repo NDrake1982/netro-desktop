@@ -273,6 +273,20 @@
 
     <div id="toast" class="toast" hidden></div>
 
+    <div id="stack-modal" class="modal" hidden>
+        <div class="modal-content" style="width: 480px;">
+            <h3 id="stack-modal-title">Run sequence</h3>
+            <p class="hint" style="margin-top:0;">
+                Tick zones to run, back-to-back. Each runs for its own duration. Sequence starts now.
+            </p>
+            <div id="stack-zones-list" class="rule-zones" style="max-height:340px; overflow-y:auto;"></div>
+            <div class="modal-actions">
+                <button class="btn-secondary" data-close-stack>Cancel</button>
+                <button class="btn-primary" id="stack-confirm">Start sequence</button>
+            </div>
+        </div>
+    </div>
+
     <div id="pause-modal" class="modal" hidden>
         <div class="modal-content" style="width:380px;">
             <h3 id="pause-modal-title">Pause controller</h3>
