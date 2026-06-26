@@ -1949,6 +1949,7 @@ function renderControllerCard(cfg, info, errorMsg) {
             <div class="zone-list">${zoneRows}</div>
             <div class="controller-actions">
                 <button class="btn-secondary" data-action="stop" data-serial="${cfg.serial}">Stop all</button>
+                <button class="btn-secondary" data-action="run-sequence" data-serial="${cfg.serial}" data-nickname="${escapeHtml(cfg.nickname || info.name || cfg.serial)}">Run sequence…</button>
                 <button class="btn-secondary" data-action="skip" data-serial="${cfg.serial}">Skip day…</button>
                 <button class="btn-secondary" data-action="pause" data-serial="${cfg.serial}" data-nickname="${escapeHtml(cfg.nickname || info.name || cfg.serial)}">${cfg.paused_until ? 'Resume' : 'Pause…'}</button>
                 <button class="btn-secondary" data-action="toggle" data-serial="${cfg.serial}" data-enabled="${enabled}">${enabled ? 'Disable' : 'Enable'}</button>
@@ -1983,6 +1984,8 @@ async function handleCardAction(e) {
             await netro.setStatus(serial, !wasEnabled);
             toast(wasEnabled ? 'Disabled' : 'Enabled', 'success');
             loadDashboard();
+        } else if (action === 'run-sequence') {
+            openStackModal(serial, e.currentTarget.dataset.nickname);
         } else if (action === 'pause') {
             const ctrl = config.controllers.find(c => c.serial === serial);
             if (ctrl?.paused_until) {
@@ -2152,6 +2155,95 @@ document.getElementById('run-confirm').addEventListener('click', async () => {
 document.querySelectorAll('[data-close-modal]').forEach(b =>
     b.addEventListener('click', closeRunModal)
 );
+
+// ---------- Run sequence (multi-zone manual stack) ----------
+let stackCtx = null;
+
+function openStackModal(serial, nickname) {
+    const info = dashboardControllerInfos.get(serial);
+    if (!info?.zones) {
+        toast('Controller info not loaded yet — try Refresh first', 'error');
+        return;
+    }
+    stackCtx = { serial, nickname };
+    document.getElementById('stack-modal-title').textContent = `Run sequence on ${nickname}`;
+    const activeZones = info.zones.filter(z => z.enabled);
+    const list = document.getElementById('stack-zones-list');
+    if (!activeZones.length) {
+        list.innerHTML = `<span class="hint">No active zones on this controller.</span>`;
+    } else {
+        list.innerHTML = activeZones.map(z => `
+            <label class="zone-chip">
+                <input type="checkbox" data-zone="${z.ith}">
+                <span class="zone-chip-label">${z.ith} · ${escapeHtml(z.name)}</span>
+                <span class="zone-chip-duration">
+                    · <input type="number" class="zone-chip-duration-input" data-zone="${z.ith}" min="1" max="240" value="10" title="Duration in minutes"> min
+                </span>
+            </label>
+        `).join('');
+    }
+    document.getElementById('stack-modal').hidden = false;
+}
+
+function closeStackModal() {
+    document.getElementById('stack-modal').hidden = true;
+    stackCtx = null;
+}
+
+document.querySelectorAll('[data-close-stack]').forEach(b => b.addEventListener('click', closeStackModal));
+
+document.getElementById('stack-modal').addEventListener('click', (e) => {
+    if (e.target.id === 'stack-modal') closeStackModal();
+});
+
+document.getElementById('stack-confirm').addEventListener('click', async () => {
+    if (!stackCtx) return;
+    const checked = [...document.querySelectorAll('#stack-zones-list input[type="checkbox"]:checked')];
+    if (!checked.length) {
+        toast('Pick at least one zone', 'error');
+        return;
+    }
+    const selections = checked.map(cb => {
+        const z = parseInt(cb.dataset.zone);
+        const durInput = cb.parentElement.querySelector('.zone-chip-duration-input');
+        const d = parseInt(durInput?.value) || 10;
+        return { zone: z, duration: d };
+    });
+
+    const btn = document.getElementById('stack-confirm');
+    btn.disabled = true;
+    btn.textContent = 'Queueing…';
+    try {
+        let cursorMs = Date.now();
+        const queued = [];
+        const failed = [];
+        for (let i = 0; i < selections.length; i++) {
+            const { zone, duration } = selections[i];
+            // First zone: no start_time (water immediately). Subsequent: queued at end-of-previous.
+            const startTime = i === 0
+                ? undefined
+                : new Date(cursorMs).toISOString().replace(/\.\d+Z$/, 'Z');
+            try {
+                await netro.water(stackCtx.serial, [zone], duration, startTime ? { start_time: startTime } : {});
+                queued.push(zone);
+                cursorMs += duration * 60_000;
+            } catch (e) {
+                failed.push({ zone, error: e.message });
+            }
+        }
+        const totalMin = selections.reduce((n, s) => n + s.duration, 0);
+        if (failed.length) {
+            toast(`Queued ${queued.length}, ${failed.length} failed`, 'error');
+        } else {
+            toast(`Queued ${queued.length} zones · ${totalMin} min total`, 'success');
+        }
+        closeStackModal();
+        setTimeout(loadDashboard, 800);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Start sequence';
+    }
+});
 
 document.getElementById('run-modal').addEventListener('click', (e) => {
     if (e.target.id === 'run-modal') closeRunModal();
