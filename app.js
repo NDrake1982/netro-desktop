@@ -2557,12 +2557,14 @@ loginForm.addEventListener('submit', async (e) => {
     const password = loginPasswordInput.value;
     const confirm = loginConfirmInput.value;
     const isSetup = !loginConfirmWrap.hidden;
+    const mode = loginGate.dataset.mode;
+    const needsPassword = mode !== 'forgot';
 
     if (isSetup && password !== confirm) {
         loginErrorEl.textContent = 'Passwords don\'t match';
         return;
     }
-    if (password.length < 6) {
+    if (needsPassword && password.length < 6) {
         loginErrorEl.textContent = 'Password must be at least 6 characters';
         return;
     }
