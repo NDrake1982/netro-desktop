@@ -2605,7 +2605,12 @@ loginForm.addEventListener('submit', async (e) => {
         loginErrorEl.textContent = err.message || 'Login failed';
     } finally {
         loginSubmitBtn.disabled = false;
-        loginSubmitBtn.textContent = isSetup ? 'Create password' : 'Sign in';
+        const mode = loginGate.dataset.mode;
+        loginSubmitBtn.textContent =
+            mode === 'signup'  ? 'Create account' :
+            mode === 'forgot'  ? 'Send reset link' :
+            mode === 'reset'   ? 'Set password' :
+                                 'Sign in';
     }
 });
 
