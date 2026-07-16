@@ -47,9 +47,18 @@ export function saveLocal(cfg) {
 // --- Worker credentials (per-device) ---
 
 export function loadWorkerCreds() {
+    // Legacy: URL + token stored under WORKER_STORE. Kept for back-compat.
     const raw = localStorage.getItem(WORKER_STORE);
-    if (!raw) return { url: '', token: '' };
-    try { return JSON.parse(raw); } catch { return { url: '', token: '' }; }
+    let creds = { url: '', token: '' };
+    if (raw) { try { creds = JSON.parse(raw); } catch {} }
+    // Fallback: if either field is empty, fill in from session/DEFAULT so
+    // API calls work as soon as you're logged in — no need to visit Automation tab.
+    if (!creds.url) creds.url = DEFAULT_WORKER_URL;
+    if (!creds.token) {
+        const sess = loadSession();
+        if (sess?.token) creds.token = sess.token;
+    }
+    return creds;
 }
 
 export function saveWorkerCreds(creds) {
