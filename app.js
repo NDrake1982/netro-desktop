@@ -77,23 +77,31 @@ let workerCfg = null;                       // loaded from the Worker when conne
 let workerControllerInfos = new Map();      // serial -> netro device info (for zone dropdowns)
 
 function initAutomationTab() {
+    // loadWorkerCreds() now falls back to your session token + DEFAULT_WORKER_URL,
+    // so any logged-in user automatically has valid Worker creds. Auto-connect.
     const creds = loadWorkerCreds();
     document.getElementById('worker-url').value = creds.url || '';
     document.getElementById('worker-token').value = creds.token || '';
-    if (creds.url && creds.token && !workerCfg) {
-        connectWorker(); // auto-reconnect on tab open if we already had creds
-    } else if (workerCfg) {
+    if (workerCfg) {
         renderWorkerPanel();
+    } else if (creds.url && creds.token) {
+        connectWorker();
     }
 }
 
 async function connectWorker() {
-    const url = document.getElementById('worker-url').value.trim().replace(/\/$/, '');
-    const token = document.getElementById('worker-token').value.trim();
+    // Prefer form values (in case the user is manually entering a legacy AUTH_TOKEN
+    // to override), but fall back to loadWorkerCreds() which returns session token +
+    // DEFAULT_WORKER_URL for any logged-in user.
+    const formUrl = document.getElementById('worker-url').value.trim().replace(/\/$/, '');
+    const formToken = document.getElementById('worker-token').value.trim();
+    const fallback = loadWorkerCreds();
+    const url = formUrl || fallback.url;
+    const token = formToken || fallback.token;
     const status = document.getElementById('worker-status');
 
     if (!url || !token) {
-        status.textContent = 'Enter URL and token first.';
+        status.textContent = 'Sign in first, or paste your Worker URL and token below.';
         return;
     }
 
@@ -102,10 +110,9 @@ async function connectWorker() {
         const statusResp = await fetch(`${url}/status`);
         if (!statusResp.ok) throw new Error(`Worker /status returned ${statusResp.status}`);
         const s = await statusResp.json();
-        if (!s.has_token) throw new Error('Worker has no AUTH_TOKEN secret set — see SETUP step 6.');
 
         const cfgResp = await fetch(`${url}/config`, { headers: { Authorization: `Bearer ${token}` } });
-        if (cfgResp.status === 401) throw new Error('Auth token rejected by Worker.');
+        if (cfgResp.status === 401) throw new Error('Session or token rejected by Worker. Try signing out and back in.');
         if (!cfgResp.ok) throw new Error(`/config returned ${cfgResp.status}`);
 
         workerCfg = await cfgResp.json();
