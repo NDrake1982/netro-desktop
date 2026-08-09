@@ -2632,8 +2632,19 @@ loginForm.addEventListener('submit', async (e) => {
         });
         const data = await r.json();
         if (!r.ok) throw new Error(data.error || `${r.status}`);
+
+        // /forgot-password returns { ok: true, message: '...' } — NOT a session.
+        // Don't treat it as a login. Just show the info message and stay on the form.
+        const currentMode = loginGate.dataset.mode;
+        if (currentMode === 'forgot') {
+            const infoEl = document.getElementById('login-info');
+            if (infoEl) infoEl.textContent = data.message || 'If we have an account for that email, a reset link is on its way.';
+            return;
+        }
+
+        // /login, /signup, /reset-password all return a session token.
+        if (!data.token) throw new Error('server did not return a session token');
         saveSession({ token: data.token, expires_at: data.expires_at });
-        // Save the URL too so subsequent API calls find it without prompting.
         saveWorkerCreds({ url, token: data.token });
         hideLogin();
         await bootDashboard();
