@@ -2621,6 +2621,14 @@ loginForm.addEventListener('submit', async (e) => {
         loginErrorEl.textContent = 'Password must be at least 6 characters';
         return;
     }
+    // Email required for every mode except reset (where the token identifies the user).
+    if (mode !== 'reset') {
+        const emailField = document.getElementById('login-email');
+        if (!emailField.value.trim() || !/.+@.+\..+/.test(emailField.value.trim())) {
+            loginErrorEl.textContent = 'Please enter a valid email';
+            return;
+        }
+    }
 
     loginSubmitBtn.disabled = true;
     loginSubmitBtn.textContent =
