@@ -12,7 +12,7 @@
 //
 // See SETUP.md in this folder for deployment steps.
 
-const VERSION = '0.11.0';
+const VERSION = '0.12.0';
 const RESET_TOKEN_TTL_HOURS = 1;
 const SESSION_TTL_DAYS = 30;
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
@@ -643,7 +643,19 @@ async function evaluateSensorRules(env) {
 
     const triggered = [];
     const failed = [];
+    const skipped = [];
     let configDirty = false;
+
+    const skip = (sensor, rule, reason, extra) => {
+        skipped.push({
+            sensor: sensor.serial,
+            sensor_nickname: sensor.nickname || null,
+            rule: rule?.id || null,
+            rule_note: rule?.note || null,
+            reason,
+            ...(extra || {}),
+        });
+    };
 
     for (const sensor of sensors) {
         let latest;
@@ -653,14 +665,25 @@ async function evaluateSensorRules(env) {
             failed.push({ serial: sensor.serial, error: `reading fetch: ${e.message}` });
             continue;
         }
-        if (!latest) continue;
+        if (!latest) {
+            skip(sensor, null, 'no-recent-reading');
+            continue;
+        }
 
         for (const rule of sensor.rules) {
-            if (rule.enabled === false) continue;
+            if (rule.enabled === false) { skip(sensor, rule, 'rule-disabled'); continue; }
             const value = latest[rule.metric];
-            if (value == null) continue;
+            if (value == null) { skip(sensor, rule, 'metric-missing', { metric: rule.metric }); continue; }
             const matched = rule.comparator === '>' ? value > rule.threshold : value < rule.threshold;
-            if (!matched) continue;
+            if (!matched) {
+                skip(sensor, rule, 'threshold-not-crossed', {
+                    metric: rule.metric,
+                    value,
+                    comparator: rule.comparator,
+                    threshold: rule.threshold,
+                });
+                continue;
+            }
 
             // Cooldown check — count from when the last queued zone FINISHED,
             // not from the trigger moment. Avoids back-to-back stacking when
@@ -670,7 +693,16 @@ async function evaluateSensorRules(env) {
                 const queueMs = (rule.last_queue_duration_min || 0) * 60_000;
                 const effectiveEnd = lastMs + queueMs;
                 const ageHrs = (now.getTime() - effectiveEnd) / 3_600_000;
-                if (ageHrs < rule.cooldown_hours) continue;
+                if (ageHrs < rule.cooldown_hours) {
+                    const cooldownEndsAt = new Date(effectiveEnd + rule.cooldown_hours * 3_600_000).toISOString();
+                    skip(sensor, rule, 'cooldown', {
+                        cooldown_hours: rule.cooldown_hours,
+                        last_triggered_at: rule.last_triggered_at,
+                        cooldown_ends_at: cooldownEndsAt,
+                        remaining_hours: Math.round((rule.cooldown_hours - ageHrs) * 10) / 10,
+                    });
+                    continue;
+                }
             }
 
             // Normalize zones (backwards compat with old single-zone schema).
@@ -684,13 +716,22 @@ async function evaluateSensorRules(env) {
 
             // Skip if controller is paused (its pause window hasn't expired yet).
             const ctrlCfg = cfg.controllers.find(c => c.serial === rule.action.controller_serial);
-            if (isPaused(ctrlCfg, now)) continue;
+            if (isPaused(ctrlCfg, now)) {
+                skip(sensor, rule, 'controller-paused', {
+                    controller: rule.action.controller_serial,
+                    paused_until: ctrlCfg.paused_until,
+                });
+                continue;
+            }
 
             // Skip if the controller is in STANDBY on Netro (globally disabled by user).
             // Fail safe: if the /info check fails, skip this rule rather than fire blind.
             try {
                 const status = await fetchControllerStatus(rule.action.controller_serial);
                 if (status && String(status).toUpperCase() === 'STANDBY') {
+                    skip(sensor, rule, 'controller-standby', {
+                        controller: rule.action.controller_serial,
+                    });
                     continue;
                 }
             } catch (e) {
@@ -701,7 +742,12 @@ async function evaluateSensorRules(env) {
             // Skip if the rule's controller already has something running — avoid clashing with an active program.
             try {
                 const isBusy = await isControllerRunning(rule.action.controller_serial, now);
-                if (isBusy) continue;
+                if (isBusy) {
+                    skip(sensor, rule, 'controller-busy', {
+                        controller: rule.action.controller_serial,
+                    });
+                    continue;
+                }
             } catch (e) {
                 // If the check itself fails, fail safe by skipping rather than firing.
                 failed.push({ sensor: sensor.serial, rule: rule.id, error: `busy-check: ${e.message}` });
@@ -774,8 +820,10 @@ async function evaluateSensorRules(env) {
         checked: sensors.length,
         triggered: triggered.length,
         failed: failed.length,
+        skipped: skipped.length,
         triggered_list: triggered,
         failed_list: failed,
+        skipped_list: skipped,
     };
     // Stash on config for visibility from dashboard.
     cfg.last_sensor_eval = result;

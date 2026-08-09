@@ -349,7 +349,40 @@ document.getElementById('eval-rules-now').addEventListener('click', async () => 
         const result = await r.json();
         const tt = result.triggered || 0;
         const ff = result.failed || 0;
-        toast(`Checked ${result.checked || 0} sensor(s) · triggered ${tt}${ff ? ` · failed ${ff}` : ''}`, ff ? 'error' : 'success');
+        const sk = result.skipped || 0;
+        const parts = [`Checked ${result.checked || 0} sensor(s)`, `triggered ${tt}`];
+        if (sk) parts.push(`skipped ${sk}`);
+        if (ff) parts.push(`failed ${ff}`);
+        let toneMsg = parts.join(' · ');
+        // If nothing fired, spell out WHY for each skipped rule.
+        if (tt === 0 && Array.isArray(result.skipped_list) && result.skipped_list.length) {
+            const reasonLabels = {
+                'automation_disabled': 'automation OFF (master toggle)',
+                'rule-disabled': 'rule disabled',
+                'no-recent-reading': 'no recent sensor reading',
+                'metric-missing': 'metric missing from reading',
+                'threshold-not-crossed': 'threshold not crossed',
+                'cooldown': 'still in cooldown',
+                'controller-paused': 'controller paused',
+                'controller-standby': 'controller in STANDBY (enable in Netro app)',
+                'controller-busy': 'controller currently running',
+            };
+            const lines = result.skipped_list.slice(0, 6).map(s => {
+                const who = s.sensor_nickname || s.sensor;
+                const why = reasonLabels[s.reason] || s.reason;
+                let detail = '';
+                if (s.reason === 'threshold-not-crossed') {
+                    detail = ` (${s.metric}=${s.value} ${s.comparator} ${s.threshold})`;
+                } else if (s.reason === 'cooldown' && s.cooldown_ends_at) {
+                    const endTime = new Date(s.cooldown_ends_at).toLocaleString();
+                    detail = ` — ends ${endTime}`;
+                }
+                return `• ${who}: ${why}${detail}`;
+            });
+            const overflow = result.skipped_list.length > 6 ? `\n…and ${result.skipped_list.length - 6} more` : '';
+            toneMsg = `${parts.join(' · ')}\n${lines.join('\n')}${overflow}`;
+        }
+        toast(toneMsg, tt > 0 ? 'success' : (ff ? 'error' : 'info'));
         console.log('Sensor rules result:', result);
     } catch (e) {
         toast('Evaluate failed: ' + e.message, 'error');
@@ -730,7 +763,10 @@ function toast(msg, kind = '') {
     el.className = 'toast' + (kind ? ' ' + kind : '');
     el.hidden = false;
     clearTimeout(toast._t);
-    toast._t = setTimeout(() => el.hidden = true, 2800);
+    // Multi-line messages need longer read time; also click-to-dismiss.
+    const dur = msg.includes('\n') ? Math.min(15000, 4000 + msg.length * 40) : 2800;
+    toast._t = setTimeout(() => el.hidden = true, dur);
+    el.onclick = () => { el.hidden = true; clearTimeout(toast._t); };
 }
 
 // ---------- Dashboard ----------

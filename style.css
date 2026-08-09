@@ -1215,10 +1215,16 @@ main {
     border-radius: 8px;
     z-index: 100;
     animation: toast-in 0.2s ease;
+    white-space: pre-wrap;
+    max-width: min(560px, calc(100vw - 32px));
+    text-align: left;
+    font-size: 13px;
+    line-height: 1.5;
 }
 
 .toast.error { border-color: var(--red); }
 .toast.success { border-color: var(--green); }
+.toast.info { border-color: var(--accent, #4cc2ff); }
 
 @keyframes toast-in {
     from { opacity: 0; transform: translate(-50%, 10px); }
