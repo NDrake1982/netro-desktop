@@ -12,7 +12,7 @@
 //
 // See SETUP.md in this folder for deployment steps.
 
-const VERSION = '0.12.0';
+const VERSION = '0.12.1';
 const RESET_TOKEN_TTL_HOURS = 1;
 const SESSION_TTL_DAYS = 30;
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
@@ -189,6 +189,20 @@ async function handleHttp(request, env) {
     if (url.pathname === '/evaluate-rules-now' && request.method === 'POST') {
         const result = await evaluateSensorRules(env);
         return cors(json(result));
+    }
+
+    if (url.pathname === '/reset-rule-cooldown' && request.method === 'POST') {
+        const { sensor_serial, rule_index } = await request.json();
+        const cfg = await loadConfig(env);
+        const sensor = (cfg.sensors || []).find(s => s.serial === sensor_serial);
+        if (!sensor) return cors(json({ error: 'sensor not found' }, 404));
+        const rule = (sensor.rules || [])[rule_index];
+        if (!rule) return cors(json({ error: 'rule not found at that index' }, 404));
+        const prev = { last_triggered_at: rule.last_triggered_at, last_queue_duration_min: rule.last_queue_duration_min };
+        rule.last_triggered_at = null;
+        rule.last_queue_duration_min = 0;
+        await saveConfig(env, cfg);
+        return cors(json({ ok: true, cleared: prev }));
     }
 
     if (url.pathname === '/automation-enabled' && request.method === 'POST') {

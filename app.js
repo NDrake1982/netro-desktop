@@ -1231,7 +1231,7 @@ function wireThresholdPanel(serial) {
 // ---------- Sensor-triggered irrigation rules ----------
 function renderRulesPanel(sensorCfg) {
     const rules = Array.isArray(sensorCfg.rules) ? sensorCfg.rules : [];
-    const rows = rules.map((r, i) => renderRuleRow(r, i)).join('') ||
+    const rows = rules.map((r, i) => renderRuleRow(r, i, sensorCfg.serial)).join('') ||
         `<p class="hint">No rules yet. Click + Add rule below.</p>`;
 
     return `
@@ -1241,7 +1241,7 @@ function renderRulesPanel(sensorCfg) {
                 When this sensor's reading crosses a threshold, automatically run the chosen zone.
                 The Cloudflare Worker checks every 15 minutes. Use the cooldown to avoid back-to-back waterings.
             </p>
-            <div id="rules-list">${rows}</div>
+            <div id="rules-list" data-sensor-serial="${escapeHtml(sensorCfg.serial)}">${rows}</div>
             <div class="threshold-actions">
                 <button class="btn-secondary" id="add-rule">+ Add rule</button>
                 <button class="btn-primary" id="save-rules">Save rules</button>
@@ -1249,19 +1249,20 @@ function renderRulesPanel(sensorCfg) {
         </div>`;
 }
 
-function renderRuleRow(r, i) {
+function renderRuleRow(r, i, sensorSerial = '') {
     const controllerOpts = config.controllers.map(c =>
         `<option value="${escapeHtml(c.serial)}" ${c.serial === r.action?.controller_serial ? 'selected' : ''}>${escapeHtml(c.nickname || c.serial)}</option>`
     ).join('');
 
     const enabled = r.enabled !== false;
     let lastFired = 'never fired';
+    let isCoolingDown = false;
     if (r.last_triggered_at) {
         const lastMs = new Date(r.last_triggered_at).getTime();
         const queueMs = (r.last_queue_duration_min || 0) * 60_000;
         const cooldownMs = (r.cooldown_hours || 0) * 3_600_000;
         const nextEligibleMs = lastMs + queueMs + cooldownMs;
-        const isCoolingDown = nextEligibleMs > Date.now();
+        isCoolingDown = nextEligibleMs > Date.now();
         lastFired = isCoolingDown
             ? `last fired ${formatAgo(r.last_triggered_at)} · cooldown until ${new Date(nextEligibleMs).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}`
             : `last fired ${formatAgo(r.last_triggered_at)}`;
@@ -1308,6 +1309,7 @@ function renderRuleRow(r, i) {
                     Enabled
                 </label>
                 <span class="hint" style="margin:0;">${lastFired}</span>
+                ${isCoolingDown ? `<button class="btn-secondary" data-reset-cooldown="${i}" data-sensor-serial="${escapeHtml(sensorSerial)}" title="Clear cooldown so this rule can fire on the next cron tick">Reset cooldown</button>` : ''}
                 <button class="btn-danger" data-remove-rule="${i}">Remove</button>
             </div>
         </div>`;
@@ -1377,6 +1379,33 @@ function wireRulesPanel(serial) {
             if (!s?.rules) return;
             s.rules.splice(+b.dataset.removeRule, 1);
             loadSensorDetail(serial, currentSensorRangeDays);
+        });
+    });
+
+    list.querySelectorAll('[data-reset-cooldown]').forEach(b => {
+        b.addEventListener('click', async () => {
+            const sensorSerial = b.dataset.sensorSerial;
+            const ruleIndex = +b.dataset.resetCooldown;
+            const creds = loadWorkerCreds();
+            b.disabled = true;
+            b.textContent = 'Resetting…';
+            try {
+                const r = await fetch(`${creds.url}/reset-rule-cooldown`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${creds.token}` },
+                    body: JSON.stringify({ sensor_serial: sensorSerial, rule_index: ruleIndex }),
+                });
+                if (!r.ok) throw new Error(`server returned ${r.status}`);
+                toast('Cooldown cleared — rule will fire on next cron tick (or as soon as the controller is idle)', 'success');
+                // Reload from cloud so we see the cleared state.
+                const { cfg } = await loadConfig();
+                config = cfg;
+                loadSensorDetail(serial, currentSensorRangeDays);
+            } catch (e) {
+                b.disabled = false;
+                b.textContent = 'Reset cooldown';
+                toast('Reset failed: ' + e.message, 'error');
+            }
         });
     });
 
