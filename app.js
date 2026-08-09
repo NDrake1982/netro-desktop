@@ -2623,7 +2623,11 @@ loginForm.addEventListener('submit', async (e) => {
     }
 
     loginSubmitBtn.disabled = true;
-    loginSubmitBtn.textContent = isSetup ? 'Creating…' : 'Signing in…';
+    loginSubmitBtn.textContent =
+        mode === 'reset'  ? 'Setting password…' :
+        mode === 'forgot' ? 'Sending…' :
+        isSetup           ? 'Creating…' :
+                            'Signing in…';
     try {
         const mode = loginGate.dataset.mode;
         const emailInput = document.getElementById('login-email');
@@ -2637,9 +2641,11 @@ loginForm.addEventListener('submit', async (e) => {
             endpoint = '/forgot-password';
             body = { email };
         } else if (mode === 'reset') {
-            const params = new URLSearchParams(location.search);
+            const token = loginGate.dataset.resetToken
+                || new URLSearchParams(location.search).get('reset');
+            if (!token) throw new Error('reset link missing token — request a new email');
             endpoint = '/reset-password';
-            body = { token: params.get('reset'), password };
+            body = { token, password };
         } else {
             endpoint = '/login';
             body = { email, password };
@@ -2665,6 +2671,12 @@ loginForm.addEventListener('submit', async (e) => {
         if (!data.token) throw new Error('server did not return a session token');
         saveSession({ token: data.token, expires_at: data.expires_at });
         saveWorkerCreds({ url, token: data.token });
+        // If we came in via a ?reset=TOKEN link, clean the URL so refreshes
+        // don't re-show the reset form.
+        if (location.search.includes('reset=')) {
+            history.replaceState(null, '', location.pathname);
+            delete loginGate.dataset.resetToken;
+        }
         hideLogin();
         await bootDashboard();
     } catch (err) {
@@ -2711,8 +2723,11 @@ document.getElementById('login-signup-link')?.addEventListener('click', (e) => {
 // ---------- Init ----------
 (async () => {
     // Reset link from email: ?reset=TOKEN → show reset form regardless of session state.
+    // Cache the token on the loginGate so submit doesn't have to re-read the URL
+    // (which could be stripped by a browser autofill/form submit accident).
     const resetToken = new URLSearchParams(location.search).get('reset');
     if (resetToken) {
+        loginGate.dataset.resetToken = resetToken;
         try { await checkAuthStatus(); } catch {}
         showLogin('reset');
         return;
