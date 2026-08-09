@@ -121,6 +121,15 @@ async function connectWorker() {
         await refreshControllerInfos();
         renderWorkerPanel();
 
+        // Reveal + sync the master automation toggle. Default true if the field is missing
+        // (older Worker versions won't return it).
+        const masterBox = document.getElementById('automation-master');
+        const masterToggle = document.getElementById('automation-master-toggle');
+        if (masterBox && masterToggle) {
+            masterBox.hidden = false;
+            masterToggle.checked = workerCfg.automation_enabled !== false;
+        }
+
         // Now that creds are saved, the dashboard config can come from the cloud too.
         await initConfig();
         loadDashboard();
@@ -344,6 +353,24 @@ document.getElementById('eval-rules-now').addEventListener('click', async () => 
         console.log('Sensor rules result:', result);
     } catch (e) {
         toast('Evaluate failed: ' + e.message, 'error');
+    }
+});
+
+document.getElementById('automation-master-toggle').addEventListener('change', async (e) => {
+    const enabled = e.target.checked;
+    const creds = loadWorkerCreds();
+    try {
+        const r = await fetch(`${creds.url}/automation-enabled`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${creds.token}` },
+            body: JSON.stringify({ enabled }),
+        });
+        if (!r.ok) throw new Error(`${r.status}`);
+        workerCfg.automation_enabled = enabled;
+        toast(enabled ? 'Automation ON — sensor rules and cron will fire' : 'Automation OFF — nothing will fire', enabled ? 'success' : 'error');
+    } catch (err) {
+        e.target.checked = !enabled; // revert on failure
+        toast('Failed to update: ' + err.message, 'error');
     }
 });
 

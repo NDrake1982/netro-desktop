@@ -148,6 +148,13 @@
 
         <section id="automation" class="view">
             <div class="settings-panel">
+                <div class="automation-master" id="automation-master" hidden>
+                    <label class="toggle-big">
+                        <input type="checkbox" id="automation-master-toggle">
+                        <span>Automation enabled</span>
+                    </label>
+                    <p class="hint">When OFF, no sensor rules fire and no daily cron runs. Turn OFF instantly stops all Worker-initiated watering.</p>
+                </div>
                 <h2>Cloudflare Worker</h2>
                 <p class="hint">
                     Connect a Cloudflare Worker for recurring schedules that run automatically on

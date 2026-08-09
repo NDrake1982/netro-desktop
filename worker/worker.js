@@ -12,7 +12,7 @@
 //
 // See SETUP.md in this folder for deployment steps.
 
-const VERSION = '0.10.0';
+const VERSION = '0.11.0';
 const RESET_TOKEN_TTL_HOURS = 1;
 const SESSION_TTL_DAYS = 30;
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
@@ -52,6 +52,7 @@ async function handleHttp(request, env) {
     // Public health check — used by the dashboard to verify the URL before asking for the token.
     if (url.pathname === '/status' && request.method === 'GET') {
         const userEmail = await env.CONFIG.get('auth_user_email');
+        const cfg = await loadConfig(env);
         return cors(json({
             ok: true,
             version: VERSION,
@@ -61,6 +62,7 @@ async function handleHttp(request, env) {
             has_email: !!userEmail,
             email: userEmail || null,
             mail_enabled: !!env.RESEND_API_KEY,
+            automation_enabled: cfg.automation_enabled !== false,
         }));
     }
 
@@ -189,6 +191,14 @@ async function handleHttp(request, env) {
         return cors(json(result));
     }
 
+    if (url.pathname === '/automation-enabled' && request.method === 'POST') {
+        const { enabled } = await request.json();
+        const cfg = await loadConfig(env);
+        cfg.automation_enabled = !!enabled;
+        await saveConfig(env, cfg);
+        return cors(json({ ok: true, automation_enabled: cfg.automation_enabled }));
+    }
+
     if (url.pathname === '/watering-log' && request.method === 'GET') {
         const log = await loadWateringLog(env);
         return cors(json(log));
@@ -225,30 +235,15 @@ async function pauseController(env, serial, untilIso) {
     const ctrl = cfg.controllers.find(c => c.serial === serial);
     if (!ctrl) return { ok: false, error: 'controller not found in worker config' };
 
-    const now = new Date();
-    const until = new Date(untilIso);
-
-    // Snapshot schedules that would have run during the pause window so we
-    // can replay them after the pause expires.
-    let snapshotCount = 0;
-    try {
-        const window = await fetchValidSchedulesInWindow(serial, now, until);
-        await env.CONFIG.put(SNAPSHOT_KEY(serial), JSON.stringify(window));
-        snapshotCount = window.length;
-    } catch (e) {
-        // If snapshot fails, pause still proceeds but warn
-        console.log(`snapshot failed for ${serial}: ${e.message}`);
-    }
-
     ctrl.paused_until = untilIso;
     await saveConfig(env, cfg);
 
     try {
         await netroSetStatus(serial, false);
     } catch (e) {
-        return { ok: true, warn: `paused in config but Netro disable failed: ${e.message}`, snapshot: snapshotCount };
+        return { ok: true, warn: `paused in config but Netro disable failed: ${e.message}` };
     }
-    return { ok: true, paused_until: untilIso, snapshot: snapshotCount };
+    return { ok: true, paused_until: untilIso };
 }
 
 async function resumeController(env, serial) {
@@ -258,15 +253,12 @@ async function resumeController(env, serial) {
     ctrl.paused_until = null;
     await saveConfig(env, cfg);
 
-    let replayed = 0;
     try {
         await netroSetStatus(serial, true);
-        // Small delay so Netro has time to register the enable before we queue waters
-        replayed = await replayMissedSchedules(env, serial);
     } catch (e) {
         return { ok: true, warn: `resumed in config but Netro enable failed: ${e.message}` };
     }
-    return { ok: true, replayed };
+    return { ok: true };
 }
 
 async function resumeExpiredPauses(env) {
@@ -281,8 +273,7 @@ async function resumeExpiredPauses(env) {
         dirty = true;
         try {
             await netroSetStatus(ctrl.serial, true);
-            const replayed = await replayMissedSchedules(env, ctrl.serial);
-            resumed.push({ serial: ctrl.serial, replayed });
+            resumed.push({ serial: ctrl.serial });
         } catch (e) {
             resumed.push({ serial: ctrl.serial, warn: e.message });
         }
@@ -483,6 +474,7 @@ async function saveConfig(env, cfg) {
 
 function defaultConfig() {
     return {
+        automation_enabled: true,    // master kill switch — when false, cron + rule eval no-op
         borehole_capacity_lpm: 20,
         default_zone_flow_lpm: null, // null → use borehole capacity as zone flow (conservative)
         controllers: [],             // [{ serial, nickname }]
@@ -509,6 +501,9 @@ function defaultConfig() {
 
 async function runDailyCron(env) {
     const cfg = await loadConfig(env);
+    if (cfg.automation_enabled === false) {
+        return { ts: new Date().toISOString(), skipped: 'automation_disabled' };
+    }
     const now = new Date();
     const todayDow = now.getUTCDay();
 
@@ -637,6 +632,9 @@ function timeToUtcMsToday(now, hhmm) {
 // }
 async function evaluateSensorRules(env) {
     const cfg = await loadConfig(env);
+    if (cfg.automation_enabled === false) {
+        return { ts: new Date().toISOString(), skipped: 'automation_disabled' };
+    }
     const now = new Date();
     const sensors = (cfg.sensors || []).filter(s => Array.isArray(s.rules) && s.rules.some(r => r.enabled !== false));
     if (!sensors.length) {
@@ -687,6 +685,18 @@ async function evaluateSensorRules(env) {
             // Skip if controller is paused (its pause window hasn't expired yet).
             const ctrlCfg = cfg.controllers.find(c => c.serial === rule.action.controller_serial);
             if (isPaused(ctrlCfg, now)) continue;
+
+            // Skip if the controller is in STANDBY on Netro (globally disabled by user).
+            // Fail safe: if the /info check fails, skip this rule rather than fire blind.
+            try {
+                const status = await fetchControllerStatus(rule.action.controller_serial);
+                if (status && String(status).toUpperCase() === 'STANDBY') {
+                    continue;
+                }
+            } catch (e) {
+                failed.push({ sensor: sensor.serial, rule: rule.id, error: `status-check: ${e.message}` });
+                continue;
+            }
 
             // Skip if the rule's controller already has something running — avoid clashing with an active program.
             try {
@@ -771,6 +781,16 @@ async function evaluateSensorRules(env) {
     cfg.last_sensor_eval = result;
     await saveConfig(env, cfg);
     return result;
+}
+
+// Returns the controller's Netro device.status (e.g. "ONLINE", "STANDBY") or null.
+async function fetchControllerStatus(serial) {
+    const params = new URLSearchParams({ key: serial });
+    const r = await fetch(`${NETRO_BASE}/info.json?${params}`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const j = await r.json();
+    if (j.status !== 'OK') throw new Error(`Netro: ${(j.errors?.[0]?.message) || j.status}`);
+    return j.data?.device?.status || null;
 }
 
 // Returns true if any schedule on the given controller is currently EXECUTING.
