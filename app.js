@@ -2691,6 +2691,14 @@ document.getElementById('login-signup-link')?.addEventListener('click', (e) => {
 
 // ---------- Init ----------
 (async () => {
+    // Reset link from email: ?reset=TOKEN → show reset form regardless of session state.
+    const resetToken = new URLSearchParams(location.search).get('reset');
+    if (resetToken) {
+        try { await checkAuthStatus(); } catch {}
+        showLogin('reset');
+        return;
+    }
+
     if (hasValidSession()) {
         // Existing session — just boot the dashboard.
         await bootDashboard();
