@@ -2512,6 +2512,25 @@ const loginPasswordInput = document.getElementById('login-password');
 const loginConfirmWrap = document.getElementById('login-password-confirm-wrap');
 const loginConfirmInput = document.getElementById('login-password-confirm');
 
+// Live password-match feedback: whenever either password field changes and
+// the confirm field is visible, show a small ✓ / ✗ under it.
+function updatePasswordMatchHint() {
+    if (loginConfirmWrap.hidden) return;
+    const pw = document.getElementById('login-password').value;
+    const cf = loginConfirmInput.value;
+    const infoEl = document.getElementById('login-info');
+    if (!cf) { infoEl.textContent = ''; infoEl.style.color = ''; return; }
+    if (pw === cf) {
+        infoEl.textContent = '✓ Passwords match';
+        infoEl.style.color = 'var(--green)';
+    } else {
+        infoEl.textContent = '✗ Passwords don\'t match';
+        infoEl.style.color = 'var(--red)';
+    }
+}
+document.getElementById('login-password').addEventListener('input', updatePasswordMatchHint);
+loginConfirmInput.addEventListener('input', updatePasswordMatchHint);
+
 function showLogin(mode, opts = {}) {
     const emailWrap = document.getElementById('login-email-wrap');
     const passwordWrap = document.getElementById('login-password-wrap');
