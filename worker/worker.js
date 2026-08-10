@@ -12,7 +12,7 @@
 //
 // See SETUP.md in this folder for deployment steps.
 
-const VERSION = '0.12.1';
+const VERSION = '0.12.2';
 const RESET_TOKEN_TTL_HOURS = 1;
 const SESSION_TTL_DAYS = 30;
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
@@ -783,18 +783,22 @@ async function evaluateSensorRules(env) {
             for (let zi = 0; zi < zones.length; zi++) {
                 const z = zones[zi];
                 const dur = zoneDurations[z] ?? zoneDurations[String(z)] ?? defaultDuration;
-                let startIso = null;
+                // zi=0: pass null to Netro so it fires IMMEDIATELY (Netro rejects
+                // start_time=now). Still record an accurate timestamp in the log
+                // so the dashboard can place a green dot at the right x-position.
+                let netroStartArg = null;
+                let logStartTime = new Date(cursorMs).toISOString().replace(/\.\d+Z$/, 'Z');
                 if (zi > 0) {
-                    startIso = new Date(cursorMs).toISOString().replace(/\.\d+Z$/, 'Z');
+                    netroStartArg = logStartTime;
                 }
                 try {
-                    await netroWater(rule.action.controller_serial, [z], dur, startIso);
-                    queued.push({ zone: z, start: startIso || 'immediate', duration_min: dur });
+                    await netroWater(rule.action.controller_serial, [z], dur, netroStartArg);
+                    queued.push({ zone: z, start: netroStartArg || 'immediate', duration_min: dur });
                     await appendWateringLog(env, {
                         origin: 'sensor-rule',
                         serial: rule.action.controller_serial,
                         zone: z,
-                        start_time: startIso,
+                        start_time: logStartTime,
                         duration_min: dur,
                         sensor_serial: sensor.serial,
                         rule_id: rule.id,

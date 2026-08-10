@@ -1093,7 +1093,9 @@ async function loadSensorDetail(serial, days) {
     const endMs = end.getTime();
     const triggers = wateringLog
         .filter(e => e.origin === 'sensor-rule' && e.sensor_serial === serial)
-        .map(e => ({ ...e, _t: new Date(e.start_time).getTime() }))
+        // Fallback to logged_at for old rows written before worker v0.12.2
+        // (first zone in a stack had start_time=null → new Date(null)=1970).
+        .map(e => ({ ...e, _t: new Date(e.start_time || e.logged_at).getTime() }))
         .filter(e => e._t >= startMs && e._t <= endMs);
 
     const triggerMarkers = triggers.map(e => {
@@ -1718,7 +1720,9 @@ function matchLog(log, serial, zone, startMs) {
     return log.find(entry => {
         if (entry.serial !== serial) return false;
         if (entry.zone !== zone) return false;
-        const logMs = new Date(entry.start_time).getTime();
+        // Fallback to logged_at for pre-v0.12.2 sensor-rule rows where the
+        // first stacked zone had start_time=null.
+        const logMs = new Date(entry.start_time || entry.logged_at).getTime();
         return Math.abs(logMs - startMs) <= TOLERANCE_MS;
     });
 }
