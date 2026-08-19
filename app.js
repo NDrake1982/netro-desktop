@@ -2024,8 +2024,18 @@ function renderControllerCard(cfg, info, errorMsg) {
     }
 
     const enabled = (info.status || '').toUpperCase() !== 'STANDBY';
-    const statusClass = enabled ? '' : 'disabled';
-    const statusText = enabled ? 'online' : 'standby';
+    const pausedUntilMs = cfg.paused_until ? new Date(cfg.paused_until).getTime() : 0;
+    const isPaused = pausedUntilMs > Date.now();
+    let statusClass = '';
+    let statusText = 'online';
+    if (isPaused) {
+        statusClass = 'paused';
+        const untilTxt = new Date(pausedUntilMs).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+        statusText = `paused until ${untilTxt}`;
+    } else if (!enabled) {
+        statusClass = 'disabled';
+        statusText = 'standby (disabled)';
+    }
 
     const activeZones = info.zones.filter(z => z.enabled);
     const zoneRows = activeZones.map(z => `
@@ -2051,13 +2061,14 @@ function renderControllerCard(cfg, info, errorMsg) {
             </div>
             <div class="zone-list">${zoneRows}</div>
             <div class="controller-actions">
-                <button class="btn-secondary" data-action="stop" data-serial="${cfg.serial}">Stop all</button>
+                <button class="btn-secondary" data-action="stop" data-serial="${cfg.serial}" title="Cancel any currently-running or queued watering. Future scheduled runs and sensor rules will still fire.">Cancel current run</button>
                 <button class="btn-secondary" data-action="run-sequence" data-serial="${cfg.serial}" data-nickname="${escapeHtml(cfg.nickname || info.name || cfg.serial)}">Run sequence…</button>
                 <button class="btn-secondary" data-action="skip" data-serial="${cfg.serial}">Skip day…</button>
-                <button class="btn-secondary" data-action="pause" data-serial="${cfg.serial}" data-nickname="${escapeHtml(cfg.nickname || info.name || cfg.serial)}">${cfg.paused_until ? 'Resume' : 'Pause…'}</button>
+                <button class="btn-secondary" data-action="pause" data-serial="${cfg.serial}" data-nickname="${escapeHtml(cfg.nickname || info.name || cfg.serial)}">${isPaused ? 'Resume' : 'Pause…'}</button>
                 <button class="btn-secondary" data-action="toggle" data-serial="${cfg.serial}" data-enabled="${enabled}">${enabled ? 'Disable' : 'Enable'}</button>
             </div>
-            ${cfg.paused_until ? `<div class="pause-indicator">⏸ Paused until ${new Date(cfg.paused_until).toLocaleString()}</div>` : ''}
+            ${isPaused ? `<div class="pause-indicator">⏸ Paused until ${new Date(pausedUntilMs).toLocaleString()} — no scheduled runs or sensor rules will fire. <button class="btn-link" data-action="pause" data-serial="${cfg.serial}" data-nickname="${escapeHtml(cfg.nickname || info.name || cfg.serial)}">Resume now</button></div>` : ''}
+            ${!enabled && !isPaused ? `<div class="standby-indicator">⏻ Disabled in Netro (STANDBY) — no scheduled runs or sensor rules will fire. <button class="btn-link" data-action="toggle" data-serial="${cfg.serial}" data-enabled="false">Enable</button></div>` : ''}
         </div>`;
 }
 
@@ -2075,17 +2086,20 @@ async function handleCardAction(e) {
             openRunModal(serial, +e.currentTarget.dataset.zone, e.currentTarget.dataset.zname);
         } else if (action === 'stop') {
             await netro.stopWater(serial);
-            toast('Stopped', 'success');
+            toast('Cancelled current run.\nFuture scheduled runs and sensor rules will still fire.\nUse Pause or Disable to prevent them.', 'success');
+            loadDashboard();
         } else if (action === 'skip') {
             const days = prompt('Skip watering for how many days? (1-100)', '1');
             const n = parseInt(days);
             if (!n || n < 1 || n > 100) return;
             await netro.noWater(serial, n);
-            toast(`Skipping ${n} day${n > 1 ? 's' : ''}`, 'success');
+            toast(`Skipping ${n} day${n > 1 ? 's' : ''} — daily schedules disabled, sensor rules still active.`, 'success');
         } else if (action === 'toggle') {
             const wasEnabled = e.currentTarget.dataset.enabled === 'true';
             await netro.setStatus(serial, !wasEnabled);
-            toast(wasEnabled ? 'Disabled' : 'Enabled', 'success');
+            toast(wasEnabled
+                ? 'Controller DISABLED — nothing will fire until re-enabled.'
+                : 'Controller ENABLED — scheduled runs and sensor rules will fire normally.', 'success');
             loadDashboard();
         } else if (action === 'run-sequence') {
             openStackModal(serial, e.currentTarget.dataset.nickname);
